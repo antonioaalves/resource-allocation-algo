@@ -15,6 +15,15 @@ CONFIG = {
 
     'empty_dataframes': ['employee_shift_assignments_table', 'product_production_line_assignments_table'],
     
+    'storage_strategy': {
+        'mode': 'persist',  # Options: 'memory', 'persist', 'hybrid'
+        'persist_intermediate_results': False,
+        'stages_to_persist': [],  # Empty list means all stages
+        'cleanup_policy': 'keep_latest',  # Options: 'keep_all', 'keep_latest', 'keep_none'
+        'persist_format': 'db',  # Options: 'csv', 'db'
+        'storage_dir': 'data/intermediate'  # For CSV storage 
+    }, # TODO: ensure data/intermediate is created if it doesnt exist
+
     # Base directories
     'data_dir': os.path.join(ROOT_DIR, 'data'),
     'output_dir': os.path.join(ROOT_DIR, 'data', 'output'),
@@ -44,6 +53,7 @@ CONFIG = {
     },
 
     # File paths
+    # TODO: try and remove this and test if it works
     'dummy_data_filepaths': {
         'contract_types': os.path.join(ROOT_DIR, 'data', 'csvs', 'contracttype_table.csv'),
         'demands': os.path.join(ROOT_DIR, 'data', 'csvs', 'demand_table.csv'),
@@ -125,7 +135,9 @@ CONFIG = {
                     'add_changes': False,
                     'special_allocations': {}
                 },
-                'generate_report': False
+                'report': {
+                    'generate_report': True
+                }
             }
         }
     },
