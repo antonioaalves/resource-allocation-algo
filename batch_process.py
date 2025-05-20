@@ -7,12 +7,12 @@ import time
 import os
 from typing import Dict, Any
 from datetime import datetime
+from base_data_project.utils import create_components
 
 # Import project stuff
 from src.config import CONFIG
 from src.services.allocation_service import AllocationService
 from src.diagnostics.process_diagnostics import ProcessDiagnostics
-from src.utils import create_components
 
 # Get logger
 logger = logging.getLogger('BagAllocationAlgo')

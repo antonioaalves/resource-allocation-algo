@@ -5,18 +5,24 @@ import pandas as pd
 import numpy as np
 from itertools import product
 import logging
-from typing import Dict, List, Any
+from typing import Dict, List, Any, Optional
+from base_data_project.data_manager.managers import BaseDataManager
+from base_data_project.storage.models import BaseDataModel
+from base_data_project.storage.containers import BaseDataContainer
 
 # Local stuff
 from src.config import CONFIG
 
 logger = logging.getLogger('BagAllocationAlgo')
 
-class AllocationData:
+class AllocationData(BaseDataModel):
     """Container for data used in the allocation process"""
     
-    def __init__(self):
+    def __init__(self, data_container: Optional[BaseDataContainer] = None, project_name: str = 'base_data_project'):
         """Initialize empty data container"""
+        # Super init
+        super().__init__(data_container=data_container, project_name=project_name)
+
         # New dataframes
         self.contract_types_table = None
         self.days_number_table = None
@@ -48,7 +54,7 @@ class AllocationData:
         self.demands_df = None
         self.product_production_agg_df = None
     
-    def load_from_data_manager(self, data_manager):
+    def load_from_data_manager(self, data_manager: BaseDataManager):
         """Load all required data using the data manager"""
         try:
             logger.info("Loading data from data manager")

@@ -1,114 +1,148 @@
-"""Configuration for the my_new_project project."""
+"""File containing basic project configurations"""
 
+# Dependencies
 import os
 from pathlib import Path
 
-# Project name - used for logging and process tracking
-PROJECT_NAME = "my_new_project"
-
-# Get application root directory
+# Get application root directory (where main.py is located)
 ROOT_DIR = Path(__file__).resolve().parents[1]
+PROJECT_NAME = 'resource_allocation_algo'
 
 CONFIG = {
     # Database configuration
     'use_db': False,
     'db_url': f"sqlite:///{os.path.join(ROOT_DIR, 'data', 'production.db')}",
+
+    'empty_dataframes': ['employee_shift_assignments_table', 'product_production_line_assignments_table'],
     
     # Base directories
     'data_dir': os.path.join(ROOT_DIR, 'data'),
     'output_dir': os.path.join(ROOT_DIR, 'data', 'output'),
     'log_dir': os.path.join(ROOT_DIR, 'logs'),
     
-    # File paths for CSV data sources
+    # File paths mapping
+    'filepath_map': {
+        'contract_types': os.path.join(ROOT_DIR, 'data', 'csvs', 'contracttype_table.csv'),
+        'demands': os.path.join(ROOT_DIR, 'data', 'csvs', 'demand_table.csv'),
+        'days_numbers': os.path.join(ROOT_DIR, 'data', 'csvs', 'daysnumber_table.csv'),
+        'employees': os.path.join(ROOT_DIR, 'data', 'csvs', 'employee_table.csv'),
+        'employee_hours': os.path.join(ROOT_DIR, 'data', 'csvs', 'employeehours_table.csv'),
+        'employee_production_lines': os.path.join(ROOT_DIR, 'data', 'csvs', 'employeeproductionline_table.csv'),
+        'employee_shift_assignments': os.path.join(ROOT_DIR, 'data', 'csvs', 'employeeshiftassignment_table.csv'),
+        'groups': os.path.join(ROOT_DIR, 'data', 'csvs', 'group_table.csv'),
+        'line_types': os.path.join(ROOT_DIR, 'data', 'csvs', 'linetype_table.csv'),
+        'operating_types': os.path.join(ROOT_DIR, 'data', 'csvs', 'operatingtype_table.csv'),
+        'products': os.path.join(ROOT_DIR, 'data', 'csvs', 'product_table.csv'),
+        'production_lines': os.path.join(ROOT_DIR, 'data', 'csvs', 'productionline_table.csv'),
+        'production_lines_stats': os.path.join(ROOT_DIR, 'data', 'csvs', 'productionlinestats_table.csv'),
+        'production_lines_operating_types': os.path.join(ROOT_DIR, 'data', 'csvs', 'productionlineoperatingtype_table.csv'),
+        'product_production_line_assignments': os.path.join(ROOT_DIR, 'data', 'csvs', 'productproductionlineassignment_table.csv'),
+        'product_production_lines': os.path.join(ROOT_DIR, 'data', 'csvs', 'productproductionline_table.csv'),
+        'sections': os.path.join(ROOT_DIR, 'data', 'csvs', 'section_table.csv'),
+        'shifts': os.path.join(ROOT_DIR, 'data', 'csvs', 'shift_table.csv'),
+        'shift_types': os.path.join(ROOT_DIR, 'data', 'csvs', 'shifttype_table.csv')
+    },
+
+    # File paths
     'dummy_data_filepaths': {
-        # Example data files mapping - replace with your actual data files
-        'customers': os.path.join(ROOT_DIR, 'data', 'csvs', 'customers.csv'),
-        'transactions': os.path.join(ROOT_DIR, 'data', 'csvs', 'transactions.csv'),
-        'products': os.path.join(ROOT_DIR, 'data', 'csvs', 'products.csv'),
+        'contract_types': os.path.join(ROOT_DIR, 'data', 'csvs', 'contracttype_table.csv'),
+        'demands': os.path.join(ROOT_DIR, 'data', 'csvs', 'demand_table.csv'),
+        'days_numbers': os.path.join(ROOT_DIR, 'data', 'csvs', 'daysnumber_table.csv'),
+        'employees': os.path.join(ROOT_DIR, 'data', 'csvs', 'employee_table.csv'),
+        'employee_hours': os.path.join(ROOT_DIR, 'data', 'csvs', 'employeehours_table.csv'),
+        'employee_production_lines': os.path.join(ROOT_DIR, 'data', 'csvs', 'employeeproductionline_table.csv'),
+        'employee_shift_assignments': os.path.join(ROOT_DIR, 'data', 'csvs', 'employeeshiftassignment_table.csv'),
+        'groups': os.path.join(ROOT_DIR, 'data', 'csvs', 'group_table.csv'),
+        'line_types': os.path.join(ROOT_DIR, 'data', 'csvs', 'linetype_table.csv'),
+        'operating_types': os.path.join(ROOT_DIR, 'data', 'csvs', 'operatingtype_table.csv'),
+        'products': os.path.join(ROOT_DIR, 'data', 'csvs', 'product_table.csv'),
+        'production_lines': os.path.join(ROOT_DIR, 'data', 'csvs', 'productionline_table.csv'),
+        'production_lines_stats': os.path.join(ROOT_DIR, 'data', 'csvs', 'productionlinestats_table.csv'),
+        'production_lines_operating_types': os.path.join(ROOT_DIR, 'data', 'csvs', 'productionlineoperatingtype_table.csv'),
+        'product_production_line_assignments': os.path.join(ROOT_DIR, 'data', 'csvs', 'productproductionlineassignment_table.csv'),
+        'product_production_lines': os.path.join(ROOT_DIR, 'data', 'csvs', 'productproductionline_table.csv'),
+        'sections': os.path.join(ROOT_DIR, 'data', 'csvs', 'section_table.csv'),
+        'shifts': os.path.join(ROOT_DIR, 'data', 'csvs', 'shift_table.csv'),
+        'shift_types': os.path.join(ROOT_DIR, 'data', 'csvs', 'shifttype_table.csv')
     },
     
-    # Available algorithms for the project
-    'available_algorithms': [
-        'example_algorithm',
-        # Add your custom algorithms here
-    ],
+    # Available algorithms (used by AlgorithmFactory)
+    'available_algorithms': ['fillbags', 'lp'],
     
-    # Process configuration - stages and decision points
+    # Process configuration
     'stages': {
-        # Stage 1: Data Loading
         'data_loading': {
-            'sequence': 1,               # Stage order
-            'requires_previous': False,  # First stage doesn't require previous stages
-            'validation_required': True, # Validate data after loading
-            'decisions': {
-                'selections': {          # Decision point for data selection
-                    'selected_entities': ['customers', 'transactions'],  # Default entities to load
-                    'load_all': False,   # Whether to load all available entities
-                }
-            }
-        },
-        
-        # Stage 2: Data Transformation
-        'data_transformation': {
-            'sequence': 2,
-            'requires_previous': True,   # Requires previous stage completion
+            'sequence': 1,
+            'requires_previous': False,
             'validation_required': True,
             'decisions': {
-                'transformations': {     # Decision point for transformation options
-                    'apply_filtering': False,
-                    'filter_column': '',
-                    'filter_value': '',
-                    'normalize_numeric': True,  # Whether to normalize numerical data
-                    'fill_missing': True,       # Whether to fill missing values
-                    'fill_method': 'mean'       # Method for filling missing values
+                'selections': {
+                    'apply_selection': True,
+                    'months': [1],
+                    'years': [2024]
                 }
             }
         },
-        
-        # Stage 3: Processing (Algorithm Execution)
-        'processing': {
+        'data_transformation': {
+            'sequence': 2,
+            'requires_previous': True,
+            'validation_required': True,
+            'decisions': {
+                'filtering':{
+                    'apply_filtering': False,
+                    'excluded_employees': '', # to create defaults, try using a list, and make sure the decision handling is not convertng it to a string
+                    'excluded_lines': '', # to create defaults, try using a list, and make sure the decision handling is not convertng it to a string
+                },
+                'time_periods': 1
+            }
+        },
+        'product_allocation': {
             'sequence': 3,
             'requires_previous': True,
             'validation_required': True,
-            'algorithms': [              # Available algorithms for this stage
-                'example_algorithm'
-            ],
             'decisions': {
-                'algorithm_selection': {  # Decision point for algorithm selection
-                    'algorithm': 'example_algorithm',
-                    'parameters': {       # Default algorithm parameters
-                        'threshold': 50.0,
-                        'include_outliers': False,
-                        'outlier_threshold': 2.0
-                    }
+                'product_assignments': {
+                    'product_id': [],
+                    'production_line_id': [],
+                    'quantity': []
                 }
             }
         },
-        
-        # Stage 4: Result Analysis
-        'result_analysis': {
-            'sequence': 4,
+        'resource_allocation': {
+            'sequence': 4,  
             'requires_previous': True,
             'validation_required': True,
             'decisions': {
-                'report_generation': {    # Decision point for result reporting
-                    'generate_report': True,
-                    'report_format': 'csv',
-                    'include_visualizations': False,
-                    'save_detailed_results': True
-                }
+                'algorithms': ['fillbags', 'lp'] # TODO: add 'decisions' hierarchy as the others stages
+            }
+        },
+        'result_analysis': {
+            'sequence': 5,
+            'requires_previous': True,
+            'validation_required': True,
+            'decisions': {
+                'changes': {
+                    'add_changes': False,
+                    'special_allocations': {}
+                },
+                'generate_report': False
             }
         }
     },
     
-    # Algorithm parameters (defaults for each algorithm)
+    # Algorithm parameters
     'algorithm_defaults': {
-        'example_algorithm': {
-            'threshold': 50.0,
-            'include_outliers': False,
-            'outlier_threshold': 2.0
+        'fillbags': {
+            'sort_strategy': 'by_colors',
+            'prioritize_high_capacity': True
         },
-        # Add defaults for your custom algorithms here
+        'lp': {
+            'temporal_space': 1,
+            'objective_weights': {
+                'understaffing': 1.0,
+                'overstaffing': 1.0
+            }
+        }
     },
     
     # Output configuration
@@ -117,11 +151,10 @@ CONFIG = {
         'visualizations_dir': 'data/output/visualizations',
         'diagnostics_dir': 'data/diagnostics'
     },
+
     
     # Logging configuration
     'log_level': 'INFO',
     'log_format': '%(asctime)s | %(levelname)8s | %(filename)s:%(lineno)d | %(message)s',
     'log_dir': 'logs'
 }
-
-# Add any project-specific configuration below

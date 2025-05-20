@@ -12,16 +12,18 @@ from base_data_project.data_manager.factory import DataManagerFactory
 from base_data_project.log_config import setup_logger
 from base_data_project.process_management.manager import ProcessManager
 from base_data_project.utils import create_components
+from base_data_project.data_manager.managers.managers import BaseDataManager
+from base_data_project.process_management.manager import ProcessManager
 
 # Import project stuff
 from batch_process import new_process  # Import the batch process command
-from src.config import CONFIG
+from src.config import CONFIG, PROJECT_NAME
 from src.helpers import parse_allocations
 from src.services.allocation_service import AllocationService
 from src.diagnostics.process_diagnostics import ProcessDiagnostics
 
 # Initialize logger
-logger = setup_logger()
+logger = setup_logger(PROJECT_NAME)
 
 # Define the click group
 @click.group()
@@ -29,11 +31,12 @@ def cli():
     """Resource Allocation System - Command Line Interface"""
     pass
 
-def run_allocation_process_interactive(data_manager, process_manager):
+def run_allocation_process_interactive(data_manager: BaseDataManager, process_manager: ProcessManager):
     """Logic for running the allocation process with interactive user decisions"""
     logger.info("Starting interactive allocation process")
     
     try:
+
         # Create the allocation service with data and process managers
         allocation_service = AllocationService(
             data_manager=data_manager,
@@ -496,7 +499,7 @@ def interactive_process(use_db, no_tracking):
         # Create spinner for initialization
         with click.progressbar(length=100, label="Initializing") as bar:
             # Create and configure components
-            data_manager, process_manager = create_components(use_db, no_tracking)
+            data_manager, process_manager = create_components(use_db, no_tracking, config=CONFIG)
             bar.update(100)
         
         click.echo()
