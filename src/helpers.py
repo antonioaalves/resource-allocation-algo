@@ -8,8 +8,11 @@ import os
 from pandas import DataFrame
 from typing import Dict, Any
 
+# Local stuff
+from src.config import PROJECT_NAME
+
 # Get logger
-logger = logging.getLogger('BagAllocationAlgo')
+logger = logging.getLogger(PROJECT_NAME)
 
 def read_csv(file_path):
     """Function that reads a csv"""
@@ -160,3 +163,27 @@ def parse_allocations(allocation_str: str) -> Dict[str, Dict[str, Any]]:
     print(f"result: {result}")
     
     return result
+
+def reconfigure_all_loggers(main_logger):
+    """Force all existing loggers to use proper configuration"""
+    # Get all existing loggers
+    for name in logging.root.manager.loggerDict:
+        if name == 'resource_allocation_algo':
+            continue  # Skip your main logger to avoid duplicate handlers
+            
+        existing_logger = logging.getLogger(name)
+        
+        # Set them to DEBUG level
+        existing_logger.setLevel(logging.DEBUG)
+        
+        # Remove any existing handlers
+        for handler in existing_logger.handlers[:]:
+            existing_logger.removeHandler(handler)
+            
+        # Copy handlers from your project logger
+        for handler in main_logger.handlers:
+            existing_logger.addHandler(handler)
+            
+    # Also fix the root logger
+    root_logger = logging.getLogger()
+    root_logger.setLevel(logging.DEBUG)

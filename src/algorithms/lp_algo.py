@@ -4,13 +4,14 @@
 import logging
 import pandas as pd
 import pulp
-
-# Local stuff
 from base_data_project.algorithms.base import BaseAlgorithm
 from base_data_project.data_manager.managers import BaseDataManager
 
+# Local stuff
+from src.config import PROJECT_NAME
+
 # Get logger
-logger = logging.getLogger('BagAllocationAlgo')
+logger = logging.getLogger(PROJECT_NAME)
 
 class LpAlgo(BaseAlgorithm):
     """Class containing the base LP algorithm logic"""

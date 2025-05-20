@@ -10,12 +10,12 @@ from datetime import datetime
 from base_data_project.utils import create_components
 
 # Import project stuff
-from src.config import CONFIG
+from src.config import CONFIG, PROJECT_NAME
 from src.services.allocation_service import AllocationService
 from src.diagnostics.process_diagnostics import ProcessDiagnostics
 
 # Get logger
-logger = logging.getLogger('BagAllocationAlgo')
+logger = logging.getLogger(PROJECT_NAME)
 
 def run_allocation_process(data_manager, process_manager):
     """Logic for running the allocation process as a whole without user interaction"""

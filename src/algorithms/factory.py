@@ -3,13 +3,14 @@
 # Dependencies
 import logging
 from typing import Optional, Dict, Any
+from base_data_project.algorithms.base import BaseAlgorithm
 
 # Local stuff
-from base_data_project.algorithms.base import BaseAlgorithm
 from src.algorithms.lp_algo import LpAlgo
 from src.algorithms.fill_bags import FillBagsAlgorithm
+from src.config import PROJECT_NAME
 
-logger = logging.getLogger('BagAllocationAlgo')
+logger = logging.getLogger(PROJECT_NAME)
 
 class AlgorithmFactory:
     """

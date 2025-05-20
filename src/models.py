@@ -11,9 +11,9 @@ from base_data_project.storage.models import BaseDataModel
 from base_data_project.storage.containers import BaseDataContainer
 
 # Local stuff
-from src.config import CONFIG
+from src.config import CONFIG, PROJECT_NAME
 
-logger = logging.getLogger('BagAllocationAlgo')
+logger = logging.getLogger(PROJECT_NAME)
 
 class AllocationData(BaseDataModel):
     """Container for data used in the allocation process"""

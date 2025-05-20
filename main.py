@@ -2,14 +2,42 @@
 
 # Dependencies
 import logging
+import os
+from base_data_project.log_config import setup_logger
+from src.helpers import reconfigure_all_loggers
+
+# 1. Create logs directory
+os.makedirs('logs', exist_ok=True)
+
+# 2. Set up your project logger
+logger = setup_logger(
+    project_name='resource_allocation_algo',
+    log_level=logging.DEBUG,
+    log_dir='logs',
+    console_output=True
+)
+
+# Run the reconfiguration
+reconfigure_all_loggers(logger)
+
+# 4. Also preemptively fix the framework's main logger
+framework_logger = logging.getLogger('base_data_project')
+framework_logger.setLevel(logging.DEBUG)
+# Clear existing handlers
+for handler in framework_logger.handlers[:]:
+    framework_logger.removeHandler(handler)
+# Add your handlers
+for handler in logger.handlers:
+    framework_logger.addHandler(handler)
+
+logger.info("Main script starting - logging configured. Starting importing dependencies")
+
 import click
 import time
 import sys
-import os
 from typing import Dict, Any
 from datetime import datetime
 from base_data_project.data_manager.factory import DataManagerFactory
-from base_data_project.log_config import setup_logger
 from base_data_project.process_management.manager import ProcessManager
 from base_data_project.utils import create_components
 from base_data_project.data_manager.managers.managers import BaseDataManager
@@ -22,8 +50,6 @@ from src.helpers import parse_allocations
 from src.services.allocation_service import AllocationService
 from src.diagnostics.process_diagnostics import ProcessDiagnostics
 
-# Initialize logger
-logger = setup_logger(PROJECT_NAME)
 
 # Define the click group
 @click.group()

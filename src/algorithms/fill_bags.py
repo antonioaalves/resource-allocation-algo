@@ -4,14 +4,15 @@
 import logging
 import pandas as pd
 import heapq
-
-# Local stuff
-from src.helpers import parse_bags, parse_balls
 from base_data_project.algorithms.base import BaseAlgorithm
 from base_data_project.data_manager.managers import BaseDataManager
 
+# Local stuff
+from src.helpers import parse_bags, parse_balls
+from src.config import PROJECT_NAME
+
 # Get logger
-logger = logging.getLogger()
+logger = logging.getLogger(PROJECT_NAME)
 
 class FillBagsAlgorithm(BaseAlgorithm):
     """Class containing the base FillTheBags logic"""

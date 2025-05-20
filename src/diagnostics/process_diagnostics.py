@@ -10,7 +10,10 @@ import os
 from typing import Dict, List, Any, Optional, Union
 from datetime import datetime
 
-logger = logging.getLogger('BagAllocationAlgo')
+# Local stuff
+from src.config import PROJECT_NAME
+
+logger = logging.getLogger(PROJECT_NAME)
 
 class ProcessDiagnostics:
     """

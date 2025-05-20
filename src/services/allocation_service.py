@@ -13,13 +13,13 @@ from base_data_project.service import BaseService
 from base_data_project.storage.models import BaseDataModel
 
 # Local stuff
-from src.config import CONFIG
+from src.config import CONFIG, PROJECT_NAME
 from src.helpers import parse_allocations
 from src.algorithms.fill_bags import FillBagsAlgorithm
 from src.algorithms.lp_algo import LpAlgo
 from src.models import AllocationData
 
-logger = logging.getLogger('BagAllocationAlgo')
+logger = logging.getLogger(PROJECT_NAME)
 
 class AllocationService(BaseService):
     """
