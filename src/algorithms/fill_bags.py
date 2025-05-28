@@ -5,7 +5,7 @@ import logging
 import pandas as pd
 import heapq
 from base_data_project.algorithms.base import BaseAlgorithm
-from base_data_project.data_manager.managers import BaseDataManager
+from base_data_project.storage.models import BaseDataModel
 
 # Local stuff
 from src.helpers import parse_bags, parse_balls
@@ -17,7 +17,7 @@ logger = logging.getLogger(PROJECT_NAME)
 class FillBagsAlgorithm(BaseAlgorithm):
     """Class containing the base FillTheBags logic"""
 
-    def __init__(self, data: BaseDataManager, parameters=None, algo_name=None):
+    def __init__(self, data: BaseDataModel, parameters=None, algo_name=None):
         # Use the passed algo_name or default to "FillTheBags"
         actual_algo_name = algo_name or "FillTheBags"
         # Initialize the parent first
@@ -38,16 +38,16 @@ class FillBagsAlgorithm(BaseAlgorithm):
             logger.info("Starting data transformation for FillTheBags")
 
             # Existing transformation logic
-            balls_data = self.data.emp_df.copy()
+            balls_data = self.data.employee_df.copy()
             bags_allowed_for_bals = pd.merge(
-                self.data.emp_prodl_df,
-                self.data.prodl_df,
+                self.data.employee_production_lines_df,
+                self.data.production_lines_table,
                 left_on='PRODUCTION_LINE_ID',
                 right_on='ID',
                 how='left'
             ).groupby('EMPLOYEE_ID')['NAME'].agg(lambda x: ','.join(map(str, x))).reset_index()
 
-            bags_data = self.data.prodl_df.copy()
+            bags_data = self.data.production_lines_table.copy()
             
             # Log the input data
             logger.info(f"Input bags_data (prod lines): {len(bags_data)} rows, columns: {bags_data.columns.tolist()}")

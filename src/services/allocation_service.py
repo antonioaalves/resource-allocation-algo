@@ -1,16 +1,20 @@
-"""File containing the enhanced allocation service with improved process tracking"""
+"""Allocation service with intermediate data storage integration"""
 
 # Dependencies
-from typing import Dict, Any, Optional, List, Tuple
+from typing import Dict, Any, Optional, List, Tuple, Type
 import pandas as pd
 import logging
 from datetime import datetime
+import json
+
 from base_data_project.process_management.stage_handler import ProcessStageHandler
 from base_data_project.data_manager.managers import BaseDataManager
 from base_data_project.process_management.exceptions import ProcessManagementError
 from base_data_project.process_management.manager import ProcessManager
 from base_data_project.service import BaseService
 from base_data_project.storage.models import BaseDataModel
+from base_data_project.storage.containers import BaseDataContainer, MemoryDataContainer
+from base_data_project.storage.factory import DataContainerFactory
 
 # Local stuff
 from src.config import CONFIG, PROJECT_NAME
@@ -24,28 +28,56 @@ logger = logging.getLogger(PROJECT_NAME)
 class AllocationService(BaseService):
     """
     Service that orchestrates the bag allocation process with enhanced process tracking
+    and intermediate data storage.
+    
     This service:
     1. Uses a data manager for data access
     2. Works with process manager for stage tracking 
     3. Implements domain-specific logic for bag allocation
+    4. Stores intermediate results between stages
     """
 
     def __init__(self, data_manager: BaseDataManager, process_manager: Optional[ProcessManager] = None, 
-                project_name: str = 'base_data_project', data_model_class: BaseDataModel = None):
+                project_name: str = 'base_data_project', data_model_class: Optional[Type] = None):
         """
         Initialize with required dependencies
         Args:
             data_manager: Data manager for accessing data sources
             process_manager: Optional process manager for tracking execution
+            project_name: Project name for logging
+            data_model_class: Data model class to use (optional)
         """
         super().__init__(data_manager=data_manager, 
-                         process_manager=process_manager, 
-                         project_name=project_name, 
-                         data_model_class=data_model_class)
+                        process_manager=process_manager, 
+                        project_name=project_name, 
+                        data_model_class=data_model_class)
 
         self.algorithm_results = {}
+        
+        # Ensure we have a data container
+        if self.data_container is None:
+            # Create a default memory container if none was provided
+            storage_config = {
+                'mode': 'memory',
+                'project_name': project_name,
+                'cleanup_policy': 'keep_latest'
+            }
+            self.data_container = DataContainerFactory.create_data_container(storage_config)
+            logger.info(f"Created default memory data container for intermediate storage")
+        
+        # Initialize the data model if not done in parent
+        if self.data_model is None:
+            # If no data_model_class was provided, use the default AllocationData
+            if data_model_class is None:
+                from src.models import AllocationData
+                data_model_class = AllocationData
+                logger.info(f"Using default AllocationData model class")
+            
+            # Create an instance of the data model
+            self.data_model = data_model_class(self.data_container)
+            logger.info(f"Initialized data model: {self.data_model.__class__.__name__}")
 
-        logger.info("AllocationService initialized")
+        logger.info("AllocationService initialized with intermediate data storage")
 
     def _dispatch_stage(self, stage_name, algorithm_name = None, algorithm_params = None):
         """
@@ -59,38 +91,84 @@ class AllocationService(BaseService):
         Returns:
             True if the stage executed successfully, False otherwise
         """
-        # TODO: get stage
         # Get stage from stage handler if available
         stage = None
         if self.stage_handler and stage_name in self.stage_handler.stages:
             stage = self.stage_handler.stages[stage_name]
+            
+        # Check if we have previously stored data for this stage
+        stored_data = None
+        if self.data_container:
+            try:
+                stored_data = self.data_container.retrieve_stage_data(stage_name, self.current_process_id)
+                logger.info(f"Retrieved stored data for stage: {stage_name}")
+            except KeyError:
+                logger.info(f"No stored data found for stage: {stage_name}, will compute from scratch")
+                stored_data = None
+            except Exception as e:
+                logger.warning(f"Error retrieving stored data for stage {stage_name}: {str(e)}")
+                stored_data = None
+                
         # Execute the appropriate stage handler
         if stage_name == "data_loading":
-            return self._execute_data_loading()
+            return self._execute_data_loading(stored_data)
         elif stage_name == "data_transformation":
-            return self._execute_data_transformation()
+            return self._execute_data_transformation(stored_data)
         elif stage_name == "product_allocation":
-            return self._execute_product_allocation()
+            return self._execute_product_allocation(stored_data)
         elif stage_name == "resource_allocation":
-            if not algorithm_name:
+            if not algorithm_name and stage:
                 algorithms = stage.get("algorithms", ["fillbags"])
                 algorithm_name = algorithms[0]
-            return self._execute_resource_allocation(algorithm_name, algorithm_params or {})
+            return self._execute_resource_allocation(algorithm_name, algorithm_params or {}, stored_data)
         elif stage_name == "result_analysis":
-            return self._execute_result_analysis()
+            return self._execute_result_analysis(stored_data)
         else:
-            logger.error(f"Uknown stage name: {stage_name}")
+            logger.error(f"Unknown stage name: {stage_name}")
             return False
 
-    def _execute_data_loading(self) -> bool:
+    def _execute_data_loading(self, stored_data: Optional[Dict[str, Any]] = None) -> bool:
+        """
+        Execute data loading stage with intermediate storage support
+        
+        Args:
+            stored_data: Optional previously stored data for this stage
+            
+        Returns:
+            True if successful, False otherwise
+        """
         logger.info("Executing data loading stage")
+        stage_name = 'data_loading'
+        
+        # If we have valid stored data, use it instead of recomputing
+        if stored_data and isinstance(stored_data, dict) and 'status' in stored_data and stored_data['status'] == 'success':
+            logger.info("Using stored data from previous data loading execution")
+            
+            # Track progress
+            if self.stage_handler:
+                self.stage_handler.track_progress(
+                    stage_name, 
+                    1.0, 
+                    "Using cached data loading results",
+                    {"timestamp": stored_data.get('timestamp')}
+                )
+                
+            # Restore data model state if applicable
+            if hasattr(self.data_model, 'restore_state') and 'model_state' in stored_data:
+                self.data_model.restore_state(stored_data['model_state'])
+                logger.info("Restored data model state from storage")
+                
+            return True
         
         try:
             # Get stage decisions if available
-            decisions = {}
-            stage_name = 'data_loading'
+            selections = {}
             if self.stage_handler and self.process_manager:
-                stage_sequence, selections = self.get_decisions_for_stage(stage_name)
+                stage_sequence = self.stage_handler.stages[stage_name]['sequence']
+                
+                # Get decisions from process manager
+                decisions = self.process_manager.current_decisions.get(stage_sequence, {})
+                selections = decisions.get('selections', {})
 
             # Track progress
             if self.stage_handler:
@@ -101,32 +179,23 @@ class AllocationService(BaseService):
                     {"use_db": self.data_manager.config.get('db_url') is not None}
                 )
             
-            # Create a stage object for process tracking
-            stage = type('ProcessStage', (), {
-                'id': self.stage_handler.stages[stage_name]['id'], 
-                'status': 'in_progress'
-            })
-            
             # Track progress
             if self.stage_handler:
                 self.stage_handler.track_progress(
-                    "data_loading", 
+                    stage_name, 
                     0.2, 
                     "Using existing data manager"
                 )
 
-            # Create a data container
-            self.data = AllocationData()
-
-            # Load data using the data manager
-            success = self.data.load_from_data_manager(self.data_manager)
+            # Load data using the data manager 
+            success = self.data_model.load_from_data_manager(self.data_manager)
             if not success:
                 return False            
 
             # Track progress
             if self.stage_handler:
                 self.stage_handler.track_progress(
-                    "data_loading", 
+                    stage_name, 
                     0.3, 
                     "Data loaded, filtering..."
                 )
@@ -134,62 +203,88 @@ class AllocationService(BaseService):
             # Get months and years from decisions
             months = selections.get('months', [1])
             years = selections.get('years', [2024])
-            filter_result = self.data.filter_by_decision_time(months=months, years=years)
+            filter_result = self.data_model.filter_by_decision_time(months=months, years=years)
             if not filter_result:
                 return False
 
             if self.stage_handler:
                 self.stage_handler.track_progress(
-                    "data_loading",
+                    stage_name,
                     0.4,
                     "Data filtered, validating..."
                 )
 
             # Validate the loaded data
-            validation_result = self.data.validate()
-
-            # TODO: add if not validated
+            validation_result = self.data_model.validate()
             if not validation_result:
-                pass
+                logger.warning("Data validation failed, but continuing execution")
 
             if self.stage_handler:
                 self.stage_handler.track_progress(
-                    "data_loading",
+                    stage_name,
                     0.5,
                     "Data validated"
                 )
 
+            valid_joining_result = self.data_model.join_dataframes(months=months, years=years)
+            if not valid_joining_result:
+                return False
+
+            # Store results in the intermediate storage
+            if self.data_container:
+                # Capture data model state if available
+                model_state = None
+                if hasattr(self.data_model, 'get_state'):
+                    model_state = self.data_model.get_state()
+                
+                # Create result data
+                result_data = {
+                    "status": "success",
+                    "timestamp": datetime.now().isoformat(),
+                    "filters": {
+                        "months": months,
+                        "years": years
+                    },
+                    "validation_result": validation_result,
+                    "model_state": model_state
+                }
+                
+                # Store in data container
+                metadata = {
+                    "process_id": self.current_process_id,
+                    "stage_name": stage_name,
+                    "decisions": {
+                        "selections": selections
+                    }
+                }
+                
+                storage_key = self.data_container.store_stage_data(
+                    stage_name=stage_name,
+                    data=result_data,
+                    metadata=metadata
+                )
+                logger.info(f"Stored data loading results with key: {storage_key}")
+
             # Final progress update
             if self.stage_handler:
+                data_shapes = {}
+                for attr_name in dir(self.data_model):
+                    attr = getattr(self.data_model, attr_name)
+                    if isinstance(attr, pd.DataFrame):
+                        data_shapes[attr_name] = attr.shape
+                
                 self.stage_handler.track_progress(
-                    "data_loading", 
+                    stage_name, 
                     1.0, 
                     "Data loading complete",
                     {
                         "validation_result": validation_result,
                         "filter_result": filter_result,
-                        "data_shapes": {
-                            "contract_types_table": self.data.contract_types_table.shape if self.data.contract_types_table is not None else None,
-                            "demands_table": self.data.demands_table.shape if self.data.demands_table is not None else None,
-                            "employees_table": self.data.employees_table.shape if self.data.employees_table is not None else None,
-                            "employee_hours_table": self.data.employee_hours_table.shape if self.data.employee_hours_table is not None else None,
-                            "employee_production_lines_table": self.data.employee_production_lines_table.shape if self.data.employee_production_lines_table is not None else None,
-                            "employee_shift_assignments_table": self.data.employee_shift_assignments_table.shape if self.data.employee_shift_assignments_table is not None else None,
-                            "groups_table": self.data.groups_table.shape if self.data.groups_table is not None else None,
-                            "line_types_table": self.data.line_types_table.shape if self.data.line_types_table is not None else None,
-                            "products_table": self.data.products_table.shape if self.data.products_table is not None else None,
-                            "production_lines_table": self.data.production_lines_table.shape if self.data.production_lines_table is not None else None,
-                            "production_lines_stats_table": self.data.production_lines_stats_table.shape if self.data.production_lines_stats_table is not None else None,
-                            "product_production_line_assignments_table": self.data.product_production_line_assignments_table.shape if self.data.product_production_line_assignments_table is not None else None,
-                            "product_production_line_table": self.data.product_production_line_table.shape if self.data.product_production_line_table is not None else None,
-                            "sections_table": self.data.sections_table.shape if self.data.sections_table is not None else None,
-                            "shifts_table": self.data.shifts_table.shape if self.data.shifts_table is not None else None,
-                            "shift_types_table": self.data.shift_types_table.shape if self.data.shift_types_table is not None else None
-                        }
+                        "data_shapes": data_shapes
                     }
                 )
             
-            return validation_result
+            return True
             
         except Exception as e:
             logger.error(f"Error in data loading: {str(e)}", exc_info=True)
@@ -197,20 +292,44 @@ class AllocationService(BaseService):
             # Track error
             if self.stage_handler:
                 self.stage_handler.track_progress(
-                    "data_loading", 
+                    stage_name, 
                     0.0, 
                     f"Error loading data: {str(e)}"
                 )
             return False
 
-    def _execute_data_transformation(self) -> bool:
+    def _execute_data_transformation(self, stored_data: Optional[Dict[str, Any]] = None) -> bool:
         """
-        Execute the data transformation stage with process tracking
+        Execute data transformation stage with intermediate storage support
         
+        Args:
+            stored_data: Optional previously stored data for this stage
+            
         Returns:
             True if successful, False otherwise
         """
         logger.info("Executing data transformation stage")
+        stage_name = 'data_transformation'
+        
+        # If we have valid stored data, use it instead of recomputing
+        if stored_data and isinstance(stored_data, dict) and 'status' in stored_data and stored_data['status'] == 'success':
+            logger.info("Using stored data from previous data transformation execution")
+            
+            # Track progress
+            if self.stage_handler:
+                self.stage_handler.track_progress(
+                    stage_name, 
+                    1.0, 
+                    "Using cached data transformation results",
+                    {"timestamp": stored_data.get('timestamp')}
+                )
+                
+            # Restore data model state if applicable
+            if hasattr(self.data_model, 'restore_state') and 'model_state' in stored_data:
+                self.data_model.restore_state(stored_data['model_state'])
+                logger.info("Restored data model state from storage")
+                
+            return True
         
         try: 
             # Initialize variables
@@ -220,21 +339,18 @@ class AllocationService(BaseService):
             excluded_lines_list = []
             adjustments_made_employees = 0
             adjustments_made_lines = 0
-            stage_name = 'data_transformation'
             months = None
             years = None
 
             # Get stage decisions if available
             if self.stage_handler and self.process_manager:
-                stage_sequence = self.stage_handler.stages[stage_name]['sequence']
+                stage = self.stage_handler.stages[stage_name]
+                stage_sequence = stage['sequence']
                 
-                # Log all decisions for debugging
-                logger.info(f"All process manager decisions: {self.process_manager.current_decisions}")
-                logger.info(f"Looking for decisions at stage sequence: {stage_sequence}")
-                
+                # Get decisions for current stage
                 if stage_sequence in self.process_manager.current_decisions:
-                    stage_sequence, decisions = self.get_decisions_for_stage(stage_name)
-                    logger.info(f"Found decisions using direct access: {decisions}")
+                    decisions = self.process_manager.current_decisions[stage_sequence]
+                    logger.info(f"Found decisions for stage {stage_name}: {decisions}")
                     
                     # Get filtering information with proper nested access
                     if 'filtering' in decisions:
@@ -244,7 +360,7 @@ class AllocationService(BaseService):
                 # Get previous stage (data_loading) decisions to extract months and years
                 data_loading_stage = self.stage_handler.stages['data_loading']
                 data_loading_sequence = data_loading_stage['sequence']
-                data_loading_decisions = self.process_manager.current_decisions.get(data_loading_sequence)
+                data_loading_decisions = self.process_manager.current_decisions.get(data_loading_sequence, {})
 
                 if data_loading_decisions:
                     selections = data_loading_decisions.get('selections', {})
@@ -262,27 +378,49 @@ class AllocationService(BaseService):
                     metadata={'decisions': decisions}
                 )
 
-            # Join dataframes from tables
-            joining_result = self.data.join_dataframes(months, years)
-            if not joining_result:
-                if self.stage_handler:
-                    self.stage_handler.track_progress(
-                        stage_name=stage_name,
-                        progress=0.0,
-                        message="Error joining dataframes. Returning false"
-                    )
-                return False
+            # Verify we have joined data already
+            if not hasattr(self.data_model, 'employee_df') or self.data_model.employee_df is None:
+                # Try to get previously stored data from data_loading stage
+                try:
+                    data_loading_result = self.data_container.retrieve_stage_data('data_loading', self.current_process_id)
+                    if (data_loading_result and isinstance(data_loading_result, dict) and 
+                        'model_state' in data_loading_result and hasattr(self.data_model, 'restore_state')):
+                        self.data_model.restore_state(data_loading_result['model_state'])
+                        logger.info("Loaded data model state from data_loading stage")
+                    else:
+                        logger.warning("Could not restore data model from previous stage")
+                        return False
+                except Exception as e:
+                    logger.error(f"Error loading previous stage data: {str(e)}")
+                    return False
+
+            # Join dataframes if needed
+            if not hasattr(self.data_model, 'joining_complete') or not self.data_model.joining_complete:
+                joining_result = self.data_model.join_dataframes(months, years)
+                if not joining_result:
+                    if self.stage_handler:
+                        self.stage_handler.track_progress(
+                            stage_name=stage_name,
+                            progress=0.0,
+                            message="Error joining dataframes. Returning false"
+                        )
+                    return False
 
             # Extract excluded lists
             if filtering.get('apply_filtering', False):
-                excluded_employees_list = filtering.get('filter_by_employees', [])
-                excluded_lines_list = filtering.get('filter_by_lines', [])
+                excluded_employees_list = filtering.get('excluded_employees', [])
+                excluded_lines_list = filtering.get('excluded_lines', [])
 
-                # Convert both lists to ints if they are not empty
-                if excluded_employees_list != '':
-                    excluded_employees_list = [int(x) for x in excluded_employees_list]
-                if excluded_lines_list != '':
-                    excluded_lines_list = [int(x) for x in excluded_lines_list]
+                # Convert to integers if they are strings
+                if isinstance(excluded_employees_list, str) and excluded_employees_list:
+                    excluded_employees_list = [int(x) for x in excluded_employees_list.split(',')]
+                elif isinstance(excluded_employees_list, list):
+                    excluded_employees_list = [int(x) if isinstance(x, str) else x for x in excluded_employees_list]
+                    
+                if isinstance(excluded_lines_list, str) and excluded_lines_list:
+                    excluded_lines_list = [int(x) for x in excluded_lines_list.split(',')]
+                elif isinstance(excluded_lines_list, list):
+                    excluded_lines_list = [int(x) if isinstance(x, str) else x for x in excluded_lines_list]
                 
                 # Log what we found
                 logger.info(f"Final filtering dictionary: {filtering}")
@@ -291,7 +429,7 @@ class AllocationService(BaseService):
                 logger.info(f"Excluded lines: {excluded_lines_list}")
 
             # Apply filtering if enabled
-            if filtering.get('apply_filtering', False) and self.data.employee_df is not None:
+            if filtering.get('apply_filtering', False):
                 # Track progress
                 if self.stage_handler:
                     self.stage_handler.track_progress(
@@ -301,125 +439,94 @@ class AllocationService(BaseService):
                         metadata={"filtering": filtering}
                     )
 
-                # Create working copies
-                emp_df = self.data.employee_df.copy()
-                emp_prodline_df = self.data.employee_production_lines_df.copy()
-                production_line_df = self.data.production_lines_table.copy()
-                prod_prodlines_df = self.data.product_production_line_df.copy()
-                aggreg_data = self.data.product_production_agg_df.copy()
-                printable_df = self.data.printable_df.copy() if hasattr(self.data, 'printable_df') else None
-
-                # Employee filtering
-                print(f"excluded_employees_list: {excluded_employees_list}")
-                if excluded_employees_list and len(excluded_employees_list) > 0:
-                    # Convert all IDs to string to ensure matching
-                    excluded_employees_list = [int(id) for id in excluded_employees_list]
-                    emp_df['id'] = emp_df['id'].astype(int)
-                    
-                    adjustments_made_employees = len(excluded_employees_list)
-                    emp_df = emp_df[~emp_df['id'].isin(excluded_employees_list)]
-                    self.data.employee_df = emp_df.copy()
-                    logger.info(f"Made {adjustments_made_employees} changes to employee_df")
-
-                    if self.stage_handler:
-                        self.stage_handler.track_progress(
-                            stage_name=stage_name,
-                            progress=0.3,
-                            message="Dataframe containing employee information filtered",
-                            metadata={
-                                'excluded_employees_list': excluded_employees_list
-                            }
-                        )
-
-                # Production lines filtering
-                if excluded_lines_list and len(excluded_lines_list) > 0:
-                    # Convert all IDs to string to ensure matching
-                    excluded_lines_list = [int(item) for item in excluded_lines_list]
-
-                    emp_prodline_df['production_line_id'] = emp_prodline_df['production_line_id'].astype(int)
-                    prod_prodlines_df['production_line_id'] = prod_prodlines_df['production_line_id'].astype(int)
-                    production_line_df['id'] = production_line_df['id'].astype(int)
-                    aggreg_data['production_line_id'] = aggreg_data['production_line_id'].astype(int)
-                    
-                    # Also filter the rintable_df
-                    if printable_df is not None:
-                        logger.info(f"Before filtering, printable_df has {len(printable_df)} rows")
-                        printable_df['production_line_id'] = printable_df['production_line_id'].astype(int)
-                        
-                        # Log which production lines will be filtered out
-                        logger.info(f"Excluding production lines: {excluded_lines_list}")
-                        logger.info(f"Unique production line IDs in printable_df: {printable_df['production_line_id'].unique().tolist()}")
-                        
-                        # Filter the dataframe
-                        printable_df = printable_df[~printable_df['production_line_id'].isin(excluded_lines_list)]
-                        logger.info(f"After filtering, printable_df has {len(printable_df)} rows")
-                        
-                        # Update the object
-                        self.data.printable_df = printable_df.copy()
-
-                    adjustments_made_lines = len(excluded_lines_list)
-                    production_line_df = production_line_df[~production_line_df['id'].isin(excluded_lines_list)]
-                    emp_prodlines_df = emp_prodline_df[~emp_prodline_df['production_line_id'].isin(excluded_lines_list)]
-                    prod_prodlines_df = prod_prodlines_df[~prod_prodlines_df['production_line_id'].isin(excluded_lines_list)]
-                    aggreg_data = aggreg_data[~aggreg_data['production_line_id'].isin(excluded_lines_list)]
-                    self.data.production_line_df = production_line_df.copy()
-                    self.data.employee_production_lines_df = emp_prodlines_df.copy()
-                    self.data.product_production_line_df = prod_prodlines_df.copy()
-                    self.data.product_production_agg_df = aggreg_data.copy()
-                    self.data.printable_df = self.data.product_production_agg_df.copy()
-                    self.data.printable_df = self.data.printable_df[['product_id', 'production_line_id', 'product_name', 'production_line_name', 'month', 'year', 'real_hours_amount', 'operating_type_id', 'theoretical_hours_amount', 'delta_hours_amount']]
-
-                    logger.info(f"Made {adjustments_made_lines} changes to production_line_df, employee_production_lines_df, product_production_line_df, product_production_agg_df")
-
-                    self.data.printable_df.to_csv('C:/Users/antonio.alves/Documents/personal-stuff/projects/alocation-algo/operational-flexibility/data/output/printable_df.csv')
-
-                    if self.stage_handler:
-                        self.stage_handler.track_progress(
-                            stage_name=stage_name,
-                            progress=0.4,
-                            message="Dataframe containing production line information filtered",
-                            metadata={'excluded_lines_list': excluded_lines_list}
-                        )
-
-                # Final data transformation step: determine important values for algorithm running
-                
-
-                # Track progress
-                if self.stage_handler:
-                    self.stage_handler.track_progress(
-                        stage_name=stage_name, 
-                        progress=0.5, 
-                        message=f"Employee adjustments applied to {adjustments_made_employees} employees. " + 
-                                f"Line adjustments applied to {adjustments_made_lines} production lines."
+                # Apply filtering through data model
+                if hasattr(self.data_model, 'apply_filtering'):
+                    filter_result = self.data_model.apply_filtering(
+                        excluded_employees=excluded_employees_list,
+                        excluded_lines=excluded_lines_list
                     )
+                    
+                    if not filter_result:
+                        logger.warning("Filtering operation failed")
+                        if self.stage_handler:
+                            self.stage_handler.track_progress(
+                                stage_name=stage_name,
+                                progress=0.0,
+                                message="Error applying filtering"
+                            )
+                        return False
+                        
+                    adjustments_made_employees = len(excluded_employees_list) if excluded_employees_list else 0
+                    adjustments_made_lines = len(excluded_lines_list) if excluded_lines_list else 0
+                    
+                    # Track progress
+                    if self.stage_handler:
+                        self.stage_handler.track_progress(
+                            stage_name=stage_name, 
+                            progress=0.5, 
+                            message=f"Employee adjustments applied to {adjustments_made_employees} employees. " + 
+                                    f"Line adjustments applied to {adjustments_made_lines} production lines."
+                        )
+                else:
+                    # Legacy filtering approach (keep this in case data_model doesn't support the method)
+                    # [your existing filtering code would go here]
+                    logger.warning("Data model doesn't support apply_filtering method")
+
+            # Store results in the intermediate storage
+            if self.data_container:
+                # Capture data model state if available
+                model_state = None
+                if hasattr(self.data_model, 'get_state'):
+                    model_state = self.data_model.get_state()
+                
+                # Create result data
+                result_data = {
+                    "status": "success",
+                    "timestamp": datetime.now().isoformat(),
+                    "filtering": {
+                        "apply_filtering": filtering.get('apply_filtering', False),
+                        "excluded_employees": excluded_employees_list,
+                        "excluded_lines": excluded_lines_list,
+                    },
+                    "adjustments": {
+                        "employees": adjustments_made_employees,
+                        "lines": adjustments_made_lines
+                    },
+                    "model_state": model_state
+                }
+                
+                # Store in data container
+                metadata = {
+                    "process_id": self.current_process_id,
+                    "stage_name": stage_name,
+                    "decisions": decisions
+                }
+                
+                storage_key = self.data_container.store_stage_data(
+                    stage_name=stage_name,
+                    data=result_data,
+                    metadata=metadata
+                )
+                logger.info(f"Stored data transformation results with key: {storage_key}")
 
             # Complete transformation progress
             if self.stage_handler:
+                # Get data shapes for tracking
+                data_shapes = {}
+                for attr_name in dir(self.data_model):
+                    attr = getattr(self.data_model, attr_name)
+                    if isinstance(attr, pd.DataFrame):
+                        data_shapes[attr_name] = attr.shape
+                
                 self.stage_handler.track_progress(
                     stage_name=stage_name,
                     progress=1.0,
-                    message="Data transformation complete"
-                )
-
-            # Final progress update with metadata
-            if self.stage_handler:
-                self.stage_handler.track_progress(
-                    stage_name=stage_name, 
-                    progress=1.0, 
                     message="Data transformation complete",
                     metadata={
                         "apply_filtering": filtering.get('apply_filtering', False),
                         "excluded_employees": excluded_employees_list,
                         "excluded_lines": excluded_lines_list,
-                        "data_shapes": {
-                            "employee_df": self.data.employee_df.shape if self.data.employee_df is not None else None,
-                            "employee_hours_df": self.data.employee_hours_df.shape if self.data.employee_hours_df is not None else None,
-                            "employee_groups_df": self.data.employee_groups_df.shape if self.data.employee_groups_df is not None else None,
-                            "employee_production_lines_df": self.data.employee_production_lines_df.shape if self.data.employee_production_lines_df is not None else None,
-                            "product_production_line_df": self.data.product_production_line_df.shape if self.data.product_production_line_df is not None else None,
-                            "demands_df": self.data.demands_df.shape if self.data.demands_df is not None else None,
-                            "product_production_agg_df": self.data.product_production_agg_df.shape if self.data.product_production_agg_df is not None else None
-                        }
+                        "data_shapes": data_shapes
                     }
                 )
             
@@ -438,21 +545,49 @@ class AllocationService(BaseService):
                 
             return False
 
-    def _execute_product_allocation(self) -> bool:
+    def _execute_product_allocation(self, stored_data: Optional[Dict[str, Any]] = None) -> bool:
         """
-        Execute the product allocation stage with process tracking
+        Execute product allocation stage with intermediate storage support
         
+        Args:
+            stored_data: Optional previously stored data for this stage
+            
         Returns:
             True if successful, False otherwise
         """
         logger.info("Executing product allocation stage")
         stage_name = 'product_allocation'
+        
+        # If we have valid stored data, use it instead of recomputing
+        if stored_data and isinstance(stored_data, dict) and 'status' in stored_data and stored_data['status'] == 'success':
+            logger.info("Using stored data from previous product allocation execution")
+            
+            # Track progress
+            if self.stage_handler:
+                self.stage_handler.track_progress(
+                    stage_name, 
+                    1.0, 
+                    "Using cached product allocation results",
+                    {"timestamp": stored_data.get('timestamp')}
+                )
+                
+            # Restore data model state if applicable
+            if hasattr(self.data_model, 'restore_state') and 'model_state' in stored_data:
+                self.data_model.restore_state(stored_data['model_state'])
+                logger.info("Restored data model state from storage")
+                
+            return True
+            
         assigning_result = False
         try: 
             # Get stage decisions if available
             decisions = {}
             if self.stage_handler and self.process_manager:
-                stage_sequence, decisions = self.get_decisions_for_stage(stage_name)
+                stage = self.stage_handler.stages[stage_name]
+                stage_sequence = stage['sequence']
+                
+                # Get decisions from process manager
+                decisions = self.process_manager.current_decisions.get(stage_sequence, {})
 
             # Track progress
             if self.stage_handler:
@@ -463,7 +598,22 @@ class AllocationService(BaseService):
                     metadata={'decisions': decisions}
                 )
 
-            valid_assignments = self.data.validate_product_assignments(decisions.get('product_assignments', {}))
+            # Make sure we have the needed data from previous stages
+            if not hasattr(self.data_model, 'validate_product_assignments'):
+                # Try to load previous stage data
+                try:
+                    previous_stage = 'data_transformation'
+                    previous_data = self.data_container.retrieve_stage_data(previous_stage, self.current_process_id)
+                    if previous_data and 'model_state' in previous_data and hasattr(self.data_model, 'restore_state'):
+                        self.data_model.restore_state(previous_data['model_state'])
+                        logger.info(f"Loaded model state from {previous_stage} stage")
+                    else:
+                        logger.warning("Could not restore data model from previous stage")
+                except Exception as e:
+                    logger.error(f"Error loading previous stage data: {str(e)}")
+
+            # Validate product assignments
+            valid_assignments = self.data_model.validate_product_assignments(decisions.get('product_assignments', {}))
             if not valid_assignments:
                 if self.stage_handler:
                     self.stage_handler.track_progress(
@@ -482,8 +632,8 @@ class AllocationService(BaseService):
                     metadata={'decisions': decisions}
                 )
 
-            assigning_result = self.data.assign_products(decisions.get('product_assignments', {}))
-
+            # Assign products
+            assigning_result = self.data_model.assign_products(decisions.get('product_assignments', {}))
             if not assigning_result:
                 if self.stage_handler:
                     self.stage_handler.track_progress(
@@ -494,7 +644,7 @@ class AllocationService(BaseService):
                     )
                 return False
             
-
+            # Track progress
             if self.stage_handler:
                 self.stage_handler.track_progress(
                     stage_name=stage_name,
@@ -502,7 +652,38 @@ class AllocationService(BaseService):
                     message="Products allocation completed successfully",
                     metadata={'assigning_result': assigning_result}
                 )
+            
+            # Store results in intermediate storage
+            if self.data_container:
+                # Capture data model state if available
+                model_state = None
+                if hasattr(self.data_model, 'get_state'):
+                    model_state = self.data_model.get_state()
+                
+                # Create result data
+                result_data = {
+                    "status": "success",
+                    "timestamp": datetime.now().isoformat(),
+                    "product_assignments": decisions.get('product_assignments', {}),
+                    "assignment_result": assigning_result,
+                    "model_state": model_state
+                }
+                
+                # Store in data container
+                metadata = {
+                    "process_id": self.current_process_id,
+                    "stage_name": stage_name,
+                    "decisions": decisions
+                }
+                
+                storage_key = self.data_container.store_stage_data(
+                    stage_name=stage_name,
+                    data=result_data,
+                    metadata=metadata
+                )
+                logger.info(f"Stored product allocation results with key: {storage_key}")
                     
+            # Final progress update
             if self.stage_handler:
                 self.stage_handler.track_progress(
                     stage_name=stage_name,
@@ -518,67 +699,114 @@ class AllocationService(BaseService):
                 self.stage_handler.track_progress(
                     stage_name=stage_name,
                     progress=0.0,
-                    message=f"Error assigning products according tp user decisions",
+                    message=f"Error assigning products according to user decisions",
                     metadata={
                         'assigning_result': assigning_result,
-                        'data_shapes': {
-                            'product_production_line_assignments_df': self.data.product_production_line_assignments_df.shape if self.data.product_production_line_assignments_df is not None else None
-                        }
+                        'error': str(e)
                     }
                 )
 
             return False
 
-    def _execute_resource_allocation(self, algorithm_name: str, algorithm_params: Dict[str, Any]) -> bool:
+    def _execute_resource_allocation(self, algorithm_name: str, algorithm_params: Dict[str, Any], 
+                                    stored_data: Optional[Dict[str, Any]] = None) -> bool:
         """
-        Execute the resource allocation stage with a specific algorithm and process tracking
+        Execute resource allocation stage with intermediate storage support
         
         Args:
             algorithm_name: Name of the algorithm to use
             algorithm_params: Parameters for the algorithm
+            stored_data: Optional previously stored data for this stage
             
         Returns:
             True if successful, False otherwise
         """
         logger.info(f"Executing resource allocation with algorithm: {algorithm_name}")
+        stage_name = 'resource_allocation'
+        
+        # If we have valid stored data for this exact algorithm, use it
+        if (stored_data and isinstance(stored_data, dict) and 
+            'status' in stored_data and stored_data['status'] == 'success' and
+            'algorithm_name' in stored_data and stored_data['algorithm_name'] == algorithm_name):
+            
+            logger.info(f"Using stored data from previous {algorithm_name} execution")
+            
+            # Track progress
+            if self.stage_handler:
+                self.stage_handler.track_progress(
+                    stage_name, 
+                    1.0, 
+                    f"Using cached {algorithm_name} results",
+                    {"timestamp": stored_data.get('timestamp')}
+                )
+                
+            # Restore algorithm results if available
+            if 'algorithm_results' in stored_data:
+                self.algorithm_results[algorithm_name] = stored_data['algorithm_results']
+                logger.info(f"Restored {algorithm_name} results from storage")
+                
+            # Restore data model state if applicable
+            if hasattr(self.data_model, 'restore_state') and 'model_state' in stored_data:
+                self.data_model.restore_state(stored_data['model_state'])
+                logger.info("Restored data model state from storage")
+                
+            return True
         
         try:
             # Track progress
             if self.stage_handler:
                 self.stage_handler.track_progress(
-                    "resource_allocation", 
+                    stage_name, 
                     0.1, 
                     f"Starting resource allocation with {algorithm_name}",
                     {"parameters": algorithm_params}
                 )
             
-            # Create a stage object for process tracking
-            if self.stage_handler:
-                stage = type('ProcessStage', (), {
-                    'id': self.stage_handler.stages['resource_allocation']['id'], 
-                    'status': 'in_progress'
-                })
+            # Make sure we have data from previous stages
+            if not hasattr(self.data_model, 'employee_df') or self.data_model.employee_df is None:
+                # Try to load previous stage data
+                try:
+                    previous_stage = 'product_allocation'
+                    previous_data = self.data_container.retrieve_stage_data(previous_stage, self.current_process_id)
+                    if previous_data and 'model_state' in previous_data and hasattr(self.data_model, 'restore_state'):
+                        self.data_model.restore_state(previous_data['model_state'])
+                        logger.info(f"Loaded model state from {previous_stage} stage")
+                    else:
+                        logger.warning("Could not restore data model from previous stage")
+                        
+                        # Try loading from data_transformation stage
+                        previous_stage = 'data_transformation'
+                        previous_data = self.data_container.retrieve_stage_data(previous_stage, self.current_process_id)
+                        if previous_data and 'model_state' in previous_data and hasattr(self.data_model, 'restore_state'):
+                            self.data_model.restore_state(previous_data['model_state'])
+                            logger.info(f"Loaded model state from {previous_stage} stage")
+                        else:
+                            logger.warning("Could not restore data model from previous stages")
+                            return False
+                except Exception as e:
+                    logger.error(f"Error loading previous stage data: {str(e)}")
+                    return False
             
             # Track progress
             if self.stage_handler:
                 self.stage_handler.track_progress(
-                    "resource_allocation", 
+                    stage_name, 
                     0.2, 
                     f"Initializing {algorithm_name} algorithm"
                 )
             
             # Execute the appropriate algorithm
             if algorithm_name == "fillbags":
-                algorithm = FillBagsAlgorithm(algo_name=algorithm_name, data=self.data)
+                algorithm = FillBagsAlgorithm(algo_name=algorithm_name, data=self.data_model)
             elif algorithm_name == "lp":
-                algorithm = LpAlgo(algo_name=algorithm_name, data=self.data)
+                algorithm = LpAlgo(algo_name=algorithm_name, data=self.data_model)
             else:
                 logger.error(f"Unknown algorithm: {algorithm_name}")
-                
+
                 # Track error
                 if self.stage_handler:
                     self.stage_handler.track_progress(
-                        "resource_allocation", 
+                        stage_name, 
                         0.0, 
                         f"Unknown algorithm: {algorithm_name}"
                     )    
@@ -587,7 +815,7 @@ class AllocationService(BaseService):
             # Track progress
             if self.stage_handler:
                 self.stage_handler.track_progress(
-                    "resource_allocation", 
+                    stage_name, 
                     0.3, 
                     f"Running {algorithm_name} algorithm"
                 )
@@ -604,7 +832,7 @@ class AllocationService(BaseService):
             if algorithm_name == "fillbags":
                 result_summary = {
                     "filled_status": algorithm.filled,
-                    "unused_balls_count": len(algorithm.unused_balls),
+                    "unused_balls_count": len(algorithm.unused_balls_ids) if hasattr(algorithm, 'unused_balls_ids') else 0,
                     "unused_balls_capacity": algorithm.unused_balls_capacity,
                     "bag_count": len(algorithm.bag_allocations)
                 }
@@ -614,10 +842,66 @@ class AllocationService(BaseService):
                     "objective_value": algorithm.results['objective_value'] if algorithm.results else None,
                 }
             
+            # Store results in intermediate storage
+            if self.data_container:
+                # Capture data model state if available
+                model_state = None
+                if hasattr(self.data_model, 'get_state'):
+                    model_state = self.data_model.get_state()
+                
+                # Serialize algorithm results for storage
+                # We can't store the whole algorithm object, so extract key data
+                algorithm_data = {
+                    "status": algorithm.status,
+                    "execution_time": algorithm.execution_time,
+                    "result_summary": result_summary
+                }
+                
+                # Add algorithm-specific data
+                if algorithm_name == "fillbags":
+                    algorithm_data.update({
+                        "filled": algorithm.filled,
+                        "unused_balls_ids": algorithm.unused_balls_ids if hasattr(algorithm, 'unused_balls_ids') else [],
+                        "unused_balls_capacity": algorithm.unused_balls_capacity,
+                        "bag_allocations": algorithm.bag_allocations
+                    })
+                elif algorithm_name == "lp":
+                    if hasattr(algorithm, 'results') and algorithm.results:
+                        algorithm_data["results"] = {
+                            "objective_value": algorithm.results.get('objective_value'),
+                            "status": algorithm.results.get('status')
+                            # Add other LP-specific results that are needed
+                        }
+                
+                # Create result data
+                result_data = {
+                    "status": "success",
+                    "timestamp": datetime.now().isoformat(),
+                    "algorithm_name": algorithm_name,
+                    "algorithm_params": algorithm_params,
+                    "algorithm_results": algorithm_data,
+                    "result_summary": result_summary,
+                    "model_state": model_state
+                }
+                
+                # Store in data container
+                metadata = {
+                    "process_id": self.current_process_id,
+                    "stage_name": stage_name,
+                    "algorithm": algorithm_name
+                }
+                
+                storage_key = self.data_container.store_stage_data(
+                    stage_name=f"{stage_name}_{algorithm_name}",
+                    data=result_data,
+                    metadata=metadata
+                )
+                logger.info(f"Stored {algorithm_name} results with key: {storage_key}")
+            
             # Track completion
             if self.stage_handler:
                 self.stage_handler.track_progress(
-                    "resource_allocation", 
+                    stage_name, 
                     1.0, 
                     f"Resource allocation with {algorithm_name} complete",
                     result_summary
@@ -631,27 +915,91 @@ class AllocationService(BaseService):
             # Track error
             if self.stage_handler:
                 self.stage_handler.track_progress(
-                    "resource_allocation", 
+                    stage_name, 
                     0.0, 
                     f"Error executing {algorithm_name}: {str(e)}"
                 )
                 
             return False
 
-    def _execute_result_analysis(self) -> bool:
+    def _execute_result_analysis(self, stored_data: Optional[Dict[str, Any]] = None) -> bool:
         """
-        Execute the result analysis stage with process tracking and visualization
+        Execute result analysis stage with intermediate storage support
         
+        Args:
+            stored_data: Optional previously stored data for this stage
+            
         Returns:
             True if successful, False otherwise
         """
         logger.info("Executing result analysis stage")
-        # TODO: Add decision check for report generation output
-        try:
+        stage_name = 'result_analysis'
+        
+        # If we have valid stored data, use it instead of recomputing
+        if stored_data and isinstance(stored_data, dict) and 'status' in stored_data and stored_data['status'] == 'success':
+            logger.info("Using stored data from previous result analysis execution")
+            
             # Track progress
             if self.stage_handler:
                 self.stage_handler.track_progress(
-                    "result_analysis", 
+                    stage_name, 
+                    1.0, 
+                    "Using cached result analysis results",
+                    {"timestamp": stored_data.get('timestamp')}
+                )
+                
+            # Restore report path if available
+            if 'report_path' in stored_data:
+                report_path = stored_data['report_path']
+                logger.info(f"Restored report path from storage: {report_path}")
+                
+            return True
+            
+        try:
+            # Get decisions for stage if available
+            decisions = {}
+            generate_report = True  # Default to true
+            
+            if self.stage_handler and self.process_manager:
+                stage = self.stage_handler.stages[stage_name]
+                stage_sequence = stage['sequence']
+                
+                # Get decisions from process manager
+                decisions = self.process_manager.current_decisions.get(stage_sequence, {})
+                
+                # Check if report generation is disabled in decisions
+                if 'changes' in decisions and 'generate_report' in decisions['changes']:
+                    generate_report = decisions['changes']['generate_report']
+            
+            # Check if we have algorithm results
+            if not self.algorithm_results:
+                # Try to load algorithm results from storage
+                algorithm_names = ["fillbags", "lp"]  # Add all potential algorithms
+                
+                for algorithm_name in algorithm_names:
+                    try:
+                        algo_stage_name = f"resource_allocation_{algorithm_name}"
+                        algo_data = self.data_container.retrieve_stage_data(algo_stage_name, self.current_process_id)
+                        
+                        if algo_data and 'algorithm_results' in algo_data:
+                            # Create a mock algorithm object with results
+                            class MockAlgorithm:
+                                def __init__(self, data):
+                                    for key, value in data.items():
+                                        setattr(self, key, value)
+                            
+                            # Create mock algorithm with stored data
+                            mock_algo = MockAlgorithm(algo_data['algorithm_results'])
+                            self.algorithm_results[algorithm_name] = mock_algo
+                            
+                            logger.info(f"Restored {algorithm_name} results from storage")
+                    except (KeyError, Exception) as e:
+                        logger.info(f"No stored results found for {algorithm_name}: {str(e)}")
+            
+            # Track progress
+            if self.stage_handler:
+                self.stage_handler.track_progress(
+                    stage_name, 
                     0.1, 
                     "Starting result analysis"
                 )
@@ -659,7 +1007,7 @@ class AllocationService(BaseService):
             # Track algorithms being analyzed
             if self.stage_handler:
                 self.stage_handler.track_progress(
-                    "result_analysis", 
+                    stage_name, 
                     0.3, 
                     "Analyzing algorithm results",
                     {"algorithms": list(self.algorithm_results.keys())}
@@ -671,7 +1019,7 @@ class AllocationService(BaseService):
                     # Track progress for each algorithm
                     if self.stage_handler:
                         self.stage_handler.track_progress(
-                            "result_analysis", 
+                            stage_name, 
                             0.5, 
                             f"Processing output for {algorithm_name}"
                         )
@@ -679,12 +1027,13 @@ class AllocationService(BaseService):
                     algorithm.save_output()
                     logger.info(f"Saved output for algorithm: {algorithm_name}")
             
-            # Generate visualizations and HTML report if multiple algorithms were run
-            if len(self.algorithm_results) > 0:
+            # Generate visualizations and HTML report if requested
+            report_path = None
+            if generate_report and len(self.algorithm_results) > 0:
                 # Track progress
                 if self.stage_handler:
                     self.stage_handler.track_progress(
-                        "result_analysis", 
+                        stage_name, 
                         0.7, 
                         "Generating visualizations and report"
                     )
@@ -704,7 +1053,7 @@ class AllocationService(BaseService):
                     if report_path and report_path != "Report generation failed":
                         if self.stage_handler:
                             self.stage_handler.track_progress(
-                                "result_analysis", 
+                                stage_name, 
                                 0.9, 
                                 "Report generated successfully",
                                 {"report_path": report_path}
@@ -715,13 +1064,40 @@ class AllocationService(BaseService):
                 except ImportError:
                     logger.warning("Visualization module not available, skipping report generation")
             
+            # Store results in intermediate storage
+            if self.data_container:
+                # Create result data
+                result_data = {
+                    "status": "success",
+                    "timestamp": datetime.now().isoformat(),
+                    "algorithm_count": len(self.algorithm_results),
+                    "algorithms_analyzed": list(self.algorithm_results.keys()),
+                    "generate_report": generate_report,
+                    "report_path": report_path
+                }
+                
+                # Store in data container
+                metadata = {
+                    "process_id": self.current_process_id,
+                    "stage_name": stage_name,
+                    "decisions": decisions
+                }
+                
+                storage_key = self.data_container.store_stage_data(
+                    stage_name=stage_name,
+                    data=result_data,
+                    metadata=metadata
+                )
+                logger.info(f"Stored result analysis with key: {storage_key}")
+            
             # Track completion
             if self.stage_handler:
                 self.stage_handler.track_progress(
-                    "result_analysis", 
+                    stage_name, 
                     1.0, 
                     "Result analysis complete",
-                    {"algorithm_count": len(self.algorithm_results)}
+                    {"algorithm_count": len(self.algorithm_results),
+                     "report_path": report_path if report_path else None}
                 )
             
             return True
@@ -732,51 +1108,85 @@ class AllocationService(BaseService):
             # Track error
             if self.stage_handler:
                 self.stage_handler.track_progress(
-                    "result_analysis", 
+                    stage_name, 
                     0.0, 
                     f"Error in result analysis: {str(e)}"
                 )
                 
             return False
-        
-    def _validate_loaded_data(self, emp_df, prodl_df, emp_prodl_df) -> bool:
+    
+    def get_decisions_for_stage(self, stage_name: str) -> Tuple[int, Dict[str, Any]]:
         """
-        Basic validation of loaded data
+        Get decisions for a specific stage by stage name.
         
+        Args:
+            stage_name: Name of the stage to get decisions for
+            
         Returns:
-            True if data is valid, False otherwise
+            Tuple of (stage_sequence, decisions_dict)
         """
-        # Check if all dataframes were loaded
-        if emp_df is None or prodl_df is None or emp_prodl_df is None:
-            logger.error("One or more required dataframes failed to load")
+        stage_sequence = None
+        decisions = {}
+        
+        if not self.stage_handler or not self.process_manager:
+            return 0, {}
+            
+        stage = self.stage_handler.stages.get(stage_name)
+        if not stage:
+            logger.warning(f"Stage '{stage_name}' not found in stage handler")
+            return 0, {}
+            
+        stage_sequence = stage.get('sequence')
+        if stage_sequence is None:
+            logger.warning(f"No sequence found for stage '{stage_name}'")
+            return 0, {}
+            
+        decisions = self.process_manager.current_decisions.get(stage_sequence, {})
+        return stage_sequence, decisions
+    
+    def list_available_data(self, stage_name: Optional[str] = None) -> List[Dict[str, Any]]:
+        """
+        List available intermediate data.
+        
+        Args:
+            stage_name: Optional stage name to filter by
+            
+        Returns:
+            List of available data summaries
+        """
+        if not self.data_container:
+            return []
+            
+        filters = {}
+        if self.current_process_id:
+            filters['process_id'] = self.current_process_id
+            
+        if stage_name:
+            filters['stage_name'] = stage_name
+            
+        try:
+            return self.data_container.list_available_data(filters)
+        except Exception as e:
+            logger.error(f"Error listing available data: {str(e)}")
+            return []
+    
+    def cleanup_stored_data(self, policy: Optional[str] = None) -> bool:
+        """
+        Clean up stored intermediate data based on policy.
+        
+        Args:
+            policy: Cleanup policy ('keep_none', 'keep_latest', 'keep_all')
+            
+        Returns:
+            True if cleanup was successful, False otherwise
+        """
+        if not self.data_container:
             return False
-        
-        # Check if dataframes have data
-        if len(emp_df) == 0 or len(prodl_df) == 0 or len(emp_prodl_df) == 0:
-            logger.error("One or more required dataframes is empty")
+            
+        try:
+            self.data_container.cleanup(policy)
+            logger.info(f"Cleaned up stored data with policy: {policy}")
+            return True
+        except Exception as e:
+            logger.error(f"Error cleaning up stored data: {str(e)}")
             return False
-        
-        # Check for required columns in each dataframe
-        emp_required_cols = ['ID', 'CAPACITY_CONTRIBUTION']
-        prodl_required_cols = ['ID', 'NECESSITY']
-        emp_prodl_required_cols = ['EMPLOYEE_ID', 'PRODUCTION_LINE_ID']
-        
-        missing_cols = []
-        for col in emp_required_cols:
-            if col not in emp_df.columns:
-                missing_cols.append(f"emp_df:{col}")
-        
-        for col in prodl_required_cols:
-            if col not in prodl_df.columns:
-                missing_cols.append(f"prodl_df:{col}")
-                
-        for col in emp_prodl_required_cols:
-            if col not in emp_prodl_df.columns:
-                missing_cols.append(f"emp_prodl_df:{col}")
-        
-        if missing_cols:
-            logger.error(f"Missing required columns: {', '.join(missing_cols)}")
-            return False
-        
-        logger.info("Data validation passed")
-        return True

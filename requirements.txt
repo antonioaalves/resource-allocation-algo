@@ -7,7 +7,7 @@ asttokens==3.0.0
 async-lru==2.0.4
 attrs==25.2.0
 babel==2.17.0
-base_data_project @ git+https://github.com/antonioaalves/base-data-project.git@v1.0.8
+base_data_project @ git+https://github.com/antonioaalves/base-data-project.git@develop
 beautifulsoup4==4.13.3
 bleach==6.2.0
 certifi==2025.1.31

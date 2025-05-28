@@ -16,11 +16,11 @@ CONFIG = {
     'empty_dataframes': ['employee_shift_assignments_table', 'product_production_line_assignments_table'],
     
     'storage_strategy': {
-        'mode': 'persist',  # Options: 'memory', 'persist', 'hybrid'
+        'mode': 'memory',  # Options: 'memory', 'persist', 'hybrid'
         'persist_intermediate_results': False,
         'stages_to_persist': [],  # Empty list means all stages
         'cleanup_policy': 'keep_latest',  # Options: 'keep_all', 'keep_latest', 'keep_none'
-        'persist_format': 'db',  # Options: 'csv', 'db'
+        'persist_format': '',  # Options: 'csv', 'db'
         'storage_dir': 'data/intermediate'  # For CSV storage 
     }, # TODO: ensure data/intermediate is created if it doesnt exist
 

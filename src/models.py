@@ -5,7 +5,8 @@ import pandas as pd
 import numpy as np
 from itertools import product
 import logging
-from typing import Dict, List, Any, Optional
+from datetime import datetime
+from typing import Dict, List, Any, Optional, Union
 from base_data_project.data_manager.managers import BaseDataManager
 from base_data_project.storage.models import BaseDataModel
 from base_data_project.storage.containers import BaseDataContainer
@@ -19,67 +20,70 @@ class AllocationData(BaseDataModel):
     """Container for data used in the allocation process"""
     
     def __init__(self, data_container: Optional[BaseDataContainer] = None, project_name: str = 'base_data_project'):
-        """Initialize empty data container"""
-        # Super init
+        """Initialize data container"""
+        # Super init with data container
         super().__init__(data_container=data_container, project_name=project_name)
+        
+        # Initialize process ID for storage
+        self.process_id = None
+        
+        # Track original data loading status
+        self._data_loaded = False
+        self._data_transformed = False
+        self._data_filtered = False
+        
+        logger.info("AllocationData initialized with data container")
 
-        # New dataframes
-        self.contract_types_table = None
-        self.days_number_table = None
-        self.demands_table = None
-        self.employees_table = None
-        self.employee_hours_table = None
-        self.employee_production_lines_table = None
-        self.employee_shift_assignments_table = None
-        self.groups_table = None
-        self.line_types_table = None
-        self.operating_type = None
-        self.products_table = None
-        self.production_lines_table = None
-        self.production_lines_stats_table = None
-        self.production_line_operating_type_table = None
-        self.product_production_line_table = None
-        self.sections_table = None
-        self.shifts_table = None
-        self.shift_types_table = None
-
-        # Important dataframes not input (for later use)
-        self.employee_df = None
-        self.employee_hours_df = None
-        self.employee_groups_df = None
-        self.employee_production_lines_df = None
-        self.product_production_line_df = None
-        self.product_production_line_assignments_table = None
-        self.product_production_line_assignments_df = None
-        self.demands_df = None
-        self.product_production_agg_df = None
-    
     def load_from_data_manager(self, data_manager: BaseDataManager):
         """Load all required data using the data manager"""
         try:
             logger.info("Loading data from data manager")
 
-            # TODO: new data tables (remove the previous)
-            self.contract_types_table = data_manager.load_data('contract_types')
-            self.demands_table = data_manager.load_data('demands')
-            self.days_number_table = data_manager.load_data('days_numbers')
-            self.employees_table = data_manager.load_data('employees')
-            self.employee_hours_table = data_manager.load_data('employee_hours')
-            self.employee_production_lines_table = data_manager.load_data('employee_production_lines')
-            self.employee_shift_assignments_table = data_manager.load_data('employee_shift_assignments')
-            self.groups_table = data_manager.load_data('groups')
-            self.line_types_table = data_manager.load_data('line_types')
-            self.operating_types_table = data_manager.load_data('operating_types')
-            self.products_table = data_manager.load_data('products')
-            self.production_lines_table = data_manager.load_data('production_lines')
-            self.production_lines_stats_table = data_manager.load_data('production_lines_stats')
-            self.production_line_operating_type_table = data_manager.load_data('production_lines_operating_types')
-            self.product_production_line_assignments_table = data_manager.load_data('product_production_line_assignments')
-            self.product_production_line_table = data_manager.load_data('product_production_lines')
-            self.sections_table = data_manager.load_data('sections')
-            self.shifts_table = data_manager.load_data('shifts')
-            self.shift_types_table = data_manager.load_data('shift_types')
-                
+            # Load all required tables
+            tables = {
+                'contract_types': data_manager.load_data('contract_types'),
+                'demands': data_manager.load_data('demands'),
+                'days_number': data_manager.load_data('days_numbers'),
+                'employees': data_manager.load_data('employees'),
+                'employee_hours': data_manager.load_data('employee_hours'),
+                'employee_production_lines': data_manager.load_data('employee_production_lines'),
+                'employee_shift_assignments': data_manager.load_data('employee_shift_assignments'),
+                'groups': data_manager.load_data('groups'),
+                'line_types': data_manager.load_data('line_types'),
+                'operating_types': data_manager.load_data('operating_types'),
+                'products': data_manager.load_data('products'),
+                'production_lines': data_manager.load_data('production_lines'),
+                'production_lines_stats': data_manager.load_data('production_lines_stats'),
+                'production_line_operating_type': data_manager.load_data('production_lines_operating_types'),
+                'product_production_line_assignments': data_manager.load_data('product_production_line_assignments'),
+                'product_production_line': data_manager.load_data('product_production_lines'),
+                'sections': data_manager.load_data('sections'),
+                'shifts': data_manager.load_data('shifts'),
+                'shift_types': data_manager.load_data('shift_types')
+            }
+            
+            # Store all tables in the data container
+            if self.data_container:
+                # Store the loaded data in the data container
+                storage_key = self.data_container.store_stage_data(
+                    stage_name="data_loading",
+                    data=tables,
+                    metadata={
+                        "process_id": self.process_id or "default_process",
+                        "data_type": "tables",
+                        "table_count": len(tables),
+                        "tables": list(tables.keys())
+                    }
+                )
+                logger.info(f"Stored loaded data in container with key: {storage_key}")
+            
+            # For backward compatibility and direct access convenience,
+            # also store references to tables as attributes
+            for table_name, table_data in tables.items():
+                setattr(self, f"{table_name}_table", table_data)
+            
+            self._data_loaded = True
+            logger.info("Data loading completed successfully")
             return True
         except Exception as e:
             logger.error(f"Error loading data from data manager: {str(e)}")
@@ -87,28 +91,54 @@ class AllocationData(BaseDataModel):
     
     def validate(self):
         """Validate that the required data is present and valid"""
+        # If using data container, retrieve the latest data
+        if self.data_container and self._data_loaded:
+            try:
+                tables = self.data_container.retrieve_stage_data(
+                    stage_name="data_loading",
+                    process_id=self.process_id or "default_process"
+                )
+            except Exception as e:
+                logger.error(f"Error retrieving loaded data: {str(e)}")
+                # Fall back to instance attributes
+                tables = {}
+        else:
+            # Use instance attributes if no data container
+            tables = {}
+        
         missing_data = []
         empty_df = []
-        empty_tables = CONFIG.get('empty_dataframes', ['employee_shift_assignments_table', 'product_production_line_assignments_table']) # If any tables could be empty
+        empty_tables = CONFIG.get('empty_dataframes', 
+                                ['employee_shift_assignments_table', 
+                                 'product_production_line_assignments_table'])
         
-        # Get all attributes that end with '_table'
-        table_attributes = [attr for attr in dir(self) if attr.endswith('_table')]
-        
-        # Check each attribute
-        for attr in table_attributes:
-            df = getattr(self, attr)
-            if df is None:
-                missing_data.append(attr)
-
-            if attr in empty_tables:
-                continue
-            elif len(df) == 0:
-                empty_df.append(attr)
+        # Check each table
+        for table_name in [
+            'contract_types', 'demands', 'days_number', 'employees',
+            'employee_hours', 'employee_production_lines', 'employee_shift_assignments',
+            'groups', 'line_types', 'operating_types', 'products',
+            'production_lines', 'production_lines_stats', 'production_line_operating_type',
+            'product_production_line_assignments', 'product_production_line',
+            'sections', 'shifts', 'shift_types'
+        ]:
+            # Check if table exists in the data container
+            if table_name in tables:
+                df = tables[table_name]
+            else:
+                # Fall back to instance attribute
+                attr_name = f"{table_name}_table"
+                df = getattr(self, attr_name, None)
             
+            if df is None:
+                missing_data.append(table_name)
+                continue
+                
+            if table_name not in empty_tables and len(df) == 0:
+                empty_df.append(table_name)
 
         # Check if all required dataframes were loaded
         if len(missing_data) > 0:
-            logger.error(f"One or more required dataframes failed to load: {attr}")
+            logger.error(f"One or more required dataframes failed to load: {missing_data}")
             return False
         
         # Check if dataframes have data
@@ -116,75 +146,167 @@ class AllocationData(BaseDataModel):
             logger.error(f"One or more required dataframes is empty: {empty_df}")
             return False
         
-        # Check for required columns in each dataframe
-        # TODO: Add it to config file or any other file containing validations needed for each dataframe
-        
         logger.info("Data validation passed")
         return True
     
     def filter_by_decision_time(self, months, years):
         """Filter method to only load data for months and years defined"""
-
         try:
+            # First, retrieve the latest data if using data container
+            if self.data_container and self._data_loaded:
+                try:
+                    tables = self.data_container.retrieve_stage_data(
+                        stage_name="data_loading",
+                        process_id=self.process_id or "default_process"
+                    )
+                except Exception as e:
+                    logger.error(f"Error retrieving loaded data: {str(e)}")
+                    # Fall back to instance attributes
+                    tables = {
+                        attr_name.replace('_table', ''): getattr(self, attr_name)
+                        for attr_name in dir(self)
+                        if attr_name.endswith('_table') and not attr_name.startswith('_')
+                    }
+            else:
+                # Use instance attributes if no data container
+                tables = {
+                    attr_name.replace('_table', ''): getattr(self, attr_name)
+                    for attr_name in dir(self)
+                    if attr_name.endswith('_table') and not attr_name.startswith('_')
+                }
+            
+            # Ensure months and years are integers
             months = [int(m) if isinstance(m, str) else m for m in months]
             years = [int(y) if isinstance(y, str) else y for y in years]
-            # Add 'month' to the dataframes that have only date
-            self.shifts_table['day'] = pd.to_datetime(self.shifts_table['day'], dayfirst=True)
-            self.shifts_table['month'] = self.shifts_table['day'].dt.month
-            self.shifts_table['year'] = self.shifts_table['day'].dt.year
-
-            # Filter by months and years
-            self.demands_table = self.demands_table[self.demands_table['month'].isin(months)]
-            self.demands_table = self.demands_table[self.demands_table['year'].isin(years)]
-
-            self.employee_hours_table = self.employee_hours_table[self.employee_hours_table['month'].isin(months)]
-            self.employee_hours_table = self.employee_hours_table[self.employee_hours_table['year'].isin(years)]
-
-            self.production_lines_stats_table = self.production_lines_stats_table[self.production_lines_stats_table['month'].isin(months)]
-            self.production_lines_stats_table = self.production_lines_stats_table[self.production_lines_stats_table['year'].isin(years)]
-
-            self.shifts_table = self.shifts_table[self.shifts_table['month'].isin(months)]
-            self.shifts_table = self.shifts_table[self.shifts_table['year'].isin(years)]
             
+            # Create filtered copies of the tables
+            filtered_tables = {}
+            
+            # Copy tables that don't need filtering
+            for table_name, df in tables.items():
+                if table_name not in ['demands', 'employee_hours', 'production_lines_stats', 
+                                     'shifts', 'production_line_operating_type']:
+                    filtered_tables[table_name] = df.copy()
+            
+            # Add 'month' to shifts table
+            shifts_df = tables['shifts'].copy()
+            shifts_df['day'] = pd.to_datetime(shifts_df['day'], dayfirst=True)
+            shifts_df['month'] = shifts_df['day'].dt.month
+            shifts_df['year'] = shifts_df['day'].dt.year
+            
+            # Filter tables by months and years
+            filtered_tables['demands'] = tables['demands'][
+                tables['demands']['month'].isin(months) & 
+                tables['demands']['year'].isin(years)
+            ].copy()
+            
+            filtered_tables['employee_hours'] = tables['employee_hours'][
+                tables['employee_hours']['month'].isin(months) & 
+                tables['employee_hours']['year'].isin(years)
+            ].copy()
+            
+            filtered_tables['production_lines_stats'] = tables['production_lines_stats'][
+                tables['production_lines_stats']['month'].isin(months) & 
+                tables['production_lines_stats']['year'].isin(years)
+            ].copy()
+            
+            filtered_tables['shifts'] = shifts_df[
+                shifts_df['month'].isin(months) & 
+                shifts_df['year'].isin(years)
+            ].copy()
+            
+            filtered_tables['production_line_operating_type'] = tables['production_line_operating_type'][
+                tables['production_line_operating_type']['month'].isin(months) & 
+                tables['production_line_operating_type']['year'].isin(years)
+            ].copy()
+            
+            # Store filtered data in data container
+            if self.data_container:
+                storage_key = self.data_container.store_stage_data(
+                    stage_name="data_filtering",
+                    data=filtered_tables,
+                    metadata={
+                        "process_id": self.process_id or "default_process",
+                        "filter_months": months,
+                        "filter_years": years,
+                        "data_type": "filtered_tables"
+                    }
+                )
+                logger.info(f"Stored filtered data in container with key: {storage_key}")
+            
+            # For backward compatibility and direct access,
+            # update instance attributes
+            for table_name, df in filtered_tables.items():
+                setattr(self, f"{table_name}_table", df)
+            
+            self._data_filtered = True
+            logger.info(f"Successfully filtered data for months {months} and years {years}")
             return True
-
+            
         except Exception as e:
             logger.error(f"Error filtering tables by month and year decisions: {e}")
             return False
         
     def join_dataframes(self, months, years):
         """Method for joining the existing dataframes"""
-
         try:
-            # Save dataframes in variables
-            employee_df = self.employees_table.copy()
-            employee_hours_df = self.employee_hours_table.copy()
-            shift_df = self.shifts_table.copy()
-            employee_production_lines_df = self.employee_production_lines_table.copy()
-            demands_df = self.demands_table.copy()
-            production_line_operating_type_df = self.production_line_operating_type_table.copy()
+            # Retrieve the latest filtered data if available
+            if self.data_container and self._data_filtered:
+                try:
+                    tables = self.data_container.retrieve_stage_data(
+                        stage_name="data_filtering",
+                        process_id=self.process_id or "default_process"
+                    )
+                except Exception as e:
+                    logger.error(f"Error retrieving filtered data: {str(e)}")
+                    # Fall back to instance attributes
+                    tables = {
+                        attr_name.replace('_table', ''): getattr(self, attr_name)
+                        for attr_name in dir(self)
+                        if attr_name.endswith('_table') and not attr_name.startswith('_')
+                    }
+            else:
+                # Use instance attributes
+                tables = {
+                    attr_name.replace('_table', ''): getattr(self, attr_name)
+                    for attr_name in dir(self)
+                    if attr_name.endswith('_table') and not attr_name.startswith('_')
+                }
+            
+            # Create joined dataframes - follows the original implementation
+            # but uses the tables dictionary instead of attributes directly
+            
+            # Save dataframes in variables for cleaner code
+            employee_df = tables['employees'].copy()
+            employee_hours_df = tables['employee_hours'].copy()
+            shift_df = tables['shifts'].copy()
+            employee_production_lines_df = tables['employee_production_lines'].copy()
+            demands_df = tables['demands'].copy()
+            production_line_operating_type_df = tables['production_line_operating_type'].copy()
 
             # ---------------------
             # EMPLOYEE INFORMATION
             # ---------------------
             
-            employee_df = self.employees_table.merge(self.contract_types_table, how='inner', left_on='contract_type_id', right_on='id')
+            employee_df = employee_df.merge(tables['contract_types'], how='inner', left_on='contract_type_id', right_on='id')
             employee_df = employee_df.rename(columns={
                 'name_y': 'contract_type',
                 'name_x': 'name', 
                 'id_x': 'id'
             })
             employee_df = employee_df.drop(columns=['id_y'])
+            
             # Groups data
-            employee_df = employee_df.merge(self.groups_table, how='inner', left_on='group_id', right_on='id')
+            employee_df = employee_df.merge(tables['groups'], how='inner', left_on='group_id', right_on='id')
             employee_df = employee_df.rename(columns={
                 'name_y': 'group_name',
                 'name_x': 'name', 
                 'id_x': 'id'
             })
             employee_df = employee_df.drop(columns=['id_y'])
+            
             # Sections data
-            employee_df = employee_df.merge(self.sections_table, how='inner', left_on='section_id', right_on='id')
+            employee_df = employee_df.merge(tables['sections'], how='inner', left_on='section_id', right_on='id')
             employee_df = employee_df.rename(columns={
                 'name_y': 'section_name',
                 'name_x': 'name', 
@@ -197,19 +319,21 @@ class AllocationData(BaseDataModel):
             # SHIFT INFORMATION
             # ---------------------
              
-            shift_df = shift_df.merge(self.shift_types_table, how='inner', left_on='shifttype_id', right_on='id')
-            shift_df = shift_df.rename(columns={
-                'id_x': 'id'
-            })
+            shift_df = shift_df.merge(tables['shift_types'], how='inner', left_on='shifttype_id', right_on='id')
+            shift_df = shift_df.rename(columns={'id_x': 'id'})
             shift_df = shift_df.drop(columns=['name', 'id_y', 'shifttype_id'])
-            shift_df = shift_df.merge(self.groups_table, how='inner', left_on='group_id', right_on='id')
+            
+            shift_df = shift_df.merge(tables['groups'], how='inner', left_on='group_id', right_on='id')
             shift_df = shift_df.rename(columns={
                 'id_x': 'id',
                 'name_y': 'group_name',
                 'name_x': 'name'
             })
             shift_df = shift_df.drop(columns=['id_y'])
-            employee_groups_df = employee_df.drop(columns=['name', 'contract_type', 'employee_type', 'capacity_contribution', 'bank_hours', 'section_id', 'contract_type', 'section_name', 'group_name'])
+            
+            employee_groups_df = employee_df.drop(columns=['name', 'contract_type', 'employee_type', 
+                                                         'capacity_contribution', 'bank_hours', 'section_id', 
+                                                         'contract_type', 'section_name', 'group_name'])
             employee_groups_df = employee_groups_df.rename(columns={'id': 'employee_id'})
             employee_groups_df = employee_groups_df.merge(shift_df, how='inner', left_on='group_id', right_on='group_id')
             employee_groups_df = employee_groups_df.drop(columns=['id'])
@@ -218,7 +342,8 @@ class AllocationData(BaseDataModel):
             # PRODUCT/PRODUCTION LINES INFORMATION
             # ------------------------------------
 
-            product_production_line_df = self.product_production_line_table.merge(self.products_table, how='inner', left_on='product_id', right_on='id')
+            product_production_line_df = tables['product_production_line'].merge(
+                tables['products'], how='inner', left_on='product_id', right_on='id')
             product_production_line_df = product_production_line_df.rename(columns={
                 'id_x': 'id',
                 'name': 'product_name',
@@ -227,13 +352,17 @@ class AllocationData(BaseDataModel):
                 'material': 'product_material'
             })
             product_production_line_df = product_production_line_df.drop(columns=['id_y'])
-            product_production_line_df = product_production_line_df.merge(self.production_lines_table, how='inner', left_on='production_line_id', right_on='id')
+            
+            product_production_line_df = product_production_line_df.merge(
+                tables['production_lines'], how='inner', left_on='production_line_id', right_on='id')
             product_production_line_df = product_production_line_df.rename(columns={
                 'id_x': 'id',
                 'name': 'production_line_name'
             })
             product_production_line_df = product_production_line_df.drop(columns=['id_y'])
-            product_production_line_df = product_production_line_df.merge(self.production_lines_stats_table, how='inner', left_on='id', right_on='product_production_line_id')
+            
+            product_production_line_df = product_production_line_df.merge(
+                tables['production_lines_stats'], how='inner', left_on='id', right_on='product_production_line_id')
             product_production_line_df = product_production_line_df.rename(columns={
                 'id_x': 'id',
                 'name': 'production_line_name'
@@ -249,16 +378,16 @@ class AllocationData(BaseDataModel):
             # Initialize a dict to store the values for the amount of possible shifts each month
             shifts_amount = {
                 'id': [i for i in range(1, 2*len(months) + 1)],
-                'operating_type_id': [i for i in range(1,3) for _ in range(len(months))], # range(1,3) is to repeat 1 and 2 len(months) times
-                'month': months * 2,                                                      # *2: because we have two shifts
-                'year': years * len(months) * 2                                           # *2: because we have two shifts
+                'operating_type_id': [i for i in range(1,3) for _ in range(len(months))], 
+                'month': months * 2,
+                'year': years * len(months) * 2
             }
 
             shifts_amount_df = pd.DataFrame(shifts_amount)
 
             merged_df = pd.merge(
                 shifts_amount_df,
-                self.days_number_table,
+                tables['days_number'],
                 on=['month', 'year'],
                 how='left',
                 suffixes=('', '_days')
@@ -276,8 +405,8 @@ class AllocationData(BaseDataModel):
             
             # 1. Get the unique production lines, years, and months we're working with
             production_lines = production_line_operating_type_df['production_line_id'].unique()
-            target_months = months  # [1, 2, 3]
-            target_years = years     # [2024]
+            target_months = months
+            target_years = years
 
             # 2. Create a DataFrame with all combinations we need to ensure exist
             all_combinations = pd.DataFrame(list(product(
@@ -367,8 +496,7 @@ class AllocationData(BaseDataModel):
             aux_df = product_production_line_df.copy()
             aux_df['needed_hours'] = (aux_df['demand'] * 1000) / (aux_df['production_rate'] * aux_df['oee'])
 
-            # Step 2: Create a dataframe with the sum of needed_hours for the specific combination you need
-            # This will ensure real_hours_amount is the same for each month-year-production_line-diameter-section combination
+            # Step 2: Create a dataframe with the sum of needed_hours for the specific combination
             aggregation_df = aux_df.groupby(['production_line_id', 'product_diameter', 'section_id', 'month', 'year'])['needed_hours'].sum().reset_index()
             aggregation_df = aggregation_df.rename(columns={'needed_hours': 'real_hours_amount'})
 
@@ -396,16 +524,6 @@ class AllocationData(BaseDataModel):
                 (result2['operating_type_id'] == 3)
             )
 
-            # Logs (TODO: add them)
-            #product_count_original = aux_df['product_id'].nunique()
-            #product_count_result = result2['product_id'].nunique()
-            #print(f"Number of unique products in original data: {product_count_original}")
-            #print(f"Number of unique products in result: {product_count_result}")
-            ## Verify that real_hours_amount is consistent across the specified combinations
-            #check_consistency = result2.groupby(['production_line_id', 'product_diameter', 'section_id', 'month', 'year'])['real_hours_amount'].nunique()
-            #print("\nNumber of unique real_hours_amount values per combination:")
-            #print(check_consistency.value_counts())
-
             result2['delta_hours_amount'] = np.where(
                 (result2['operating_type_id'] == 3),
                 0,
@@ -418,56 +536,83 @@ class AllocationData(BaseDataModel):
             # FINAL TOUCHES
             # ------------------------------------
 
-            # Drop NA's (TODO: create a way to register which id's were droped)
-            employee_df.dropna()
-            employee_groups_df.dropna()
-            product_production_line_df.dropna()
+            # Drop NA's
+            employee_df.dropna(inplace=True)
+            employee_groups_df.dropna(inplace=True)
+            product_production_line_df.dropna(inplace=True)
 
             # Add a total to employee_hours_table
-            employee_hours_df['total_hours_leave'] = employee_hours_df['leave_fte'] + employee_hours_df['loan_fte'] + employee_hours_df['holidays_fte'] + employee_hours_df['training_hours']
+            employee_hours_df['total_hours_leave'] = (
+                employee_hours_df['leave_fte'] + 
+                employee_hours_df['loan_fte'] + 
+                employee_hours_df['holidays_fte'] + 
+                employee_hours_df['training_hours']
+            )
 
-            # ------------------------------------
-            # ASSIGNING TO CLASS ATTRIBUTES
-            # ------------------------------------
+            # Create printable DataFrame for product allocation stage
+            printable_df = product_production_agg_df.copy()
+            printable_df = printable_df[[
+                'product_id', 'production_line_id', 'product_name', 
+                'production_line_name', 'month', 'year', 'real_hours_amount', 
+                'operating_type_id', 'theoretical_hours_amount', 'delta_hours_amount'
+            ]]
 
-            self.employee_df = employee_df.copy()
-            self.employee_hours_df = employee_hours_df.copy()
-            self.employee_groups_df = employee_groups_df.copy()
-            self.employee_production_lines_df = employee_production_lines_df.copy()
-            self.product_production_line_df = product_production_line_df.copy()
-            self.demands_df = demands_df.copy()
-            self.product_production_agg_df = product_production_agg_df.copy()
+            # Prepare joined data dictionary
+            joined_data = {
+                'employee_df': employee_df,
+                'employee_hours_df': employee_hours_df,
+                'employee_groups_df': employee_groups_df,
+                'employee_production_lines_df': employee_production_lines_df,
+                'product_production_line_df': product_production_line_df,
+                'demands_df': demands_df,
+                'product_production_agg_df': product_production_agg_df,
+                'printable_df': printable_df,
+                'production_line_operating_type_df': production_line_operating_type_df
+            }
 
-            # --------------------------------------------------------
-            # CREATE PRINTABLE DATAFRAME FOR PRODUCT ALLOCATION STAGE
-            # --------------------------------------------------------
-
-            self.printable_df = self.product_production_agg_df.copy()
-            self.printable_df = self.printable_df[['product_id', 'production_line_id', 'product_name', 'production_line_name', 'month', 'year', 'real_hours_amount', 'operating_type_id', 'theoretical_hours_amount', 'delta_hours_amount']]
-
-            # Log this activities (TODO: see if there is no other information to be saved in logs)
+            # Store joined data in data container
+            if self.data_container:
+                storage_key = self.data_container.store_stage_data(
+                    stage_name="data_transformation",
+                    data=joined_data,
+                    metadata={
+                        "process_id": self.process_id or "default_process",
+                        "months": months,
+                        "years": years,
+                        "data_type": "joined_dataframes"
+                    }
+                )
+                logger.info(f"Stored joined data in container with key: {storage_key}")
+            
+            # For backward compatibility and direct access,
+            # update instance attributes
+            for df_name, df in joined_data.items():
+                setattr(self, df_name, df)
+            
+            self._data_transformed = True
+            logger.info("Successfully joined dataframes")
+            
+            # Log shape information
             logger.info(f"Employee df columns: {self.employee_df.columns}")
             logger.info(f"Employee hours df columns: {self.employee_hours_df.columns}")
             logger.info(f"Employee shifts df columns: {self.employee_groups_df.columns}")
             logger.info(f"Employee production lines df columns: {self.employee_production_lines_df.columns}")
             logger.info(f"Product production lines df columns: {self.product_production_line_df.columns}")
             logger.info(f"Demand df columns: {self.demands_df.columns}")
-
+            
             return True
         
         except Exception as e:
             logger.error(f"Error joining/merging dataframes: {e}")
             return False
 
-    def assign_products(self, product_assignments: Dict[str, List[int]]):
+    def assign_products(self, product_assignments: Dict[str, Dict[str, Any]]):
         """
-        Method for assigning produts to production lines.
+        Method for assigning products to production lines.
         Inputs:
             - products_assignments: dictionary containing assignments by product_id, production_line_id, quantity
         """
-
         try:
-            # TODO: Add validation, to only allow users to do valid additions addition  
             logger.info("Starting assigning products according to user decisions")
 
             # Create a list to hold all the rows
@@ -492,11 +637,23 @@ class AllocationData(BaseDataModel):
             df['OPERATING_TYPE_ID'] = df['OPERATING_TYPE_ID'].astype(int)
             df['QUANTITY'] = df['QUANTITY'].astype(float)
 
+            # Store the assignments in the data container
+            if self.data_container:
+                storage_key = self.data_container.store_stage_data(
+                    stage_name="product_allocation",
+                    data=df,
+                    metadata={
+                        "process_id": self.process_id or "default_process",
+                        "assignment_count": len(df),
+                        "data_type": "product_assignments"
+                    }
+                )
+                logger.info(f"Stored product assignments in container with key: {storage_key}")
+            
+            # For backward compatibility and direct access
             self.product_production_line_assignments_df = df.copy()
-            print(f"Assignments: {self.product_production_line_assignments_df}")
+            logger.info(f"Assignments: {self.product_production_line_assignments_df}")
 
-            # TODO: Remove this line:
-            self.product_production_line_assignments_df.to_csv('C:/Users/antonio.alves/Documents/personal-stuff/projects/alocation-algo/operational-flexibility/data/output/product_assignments.csv')
             return True
         except Exception as e:
             logger.error(f"Error assigning products according to user decisions: {e}")
@@ -506,10 +663,28 @@ class AllocationData(BaseDataModel):
         """
         Method for validating product assignments
         Inputs:
-            - product_assignments: dictionary containing the product allocations from user decisions. (output from parse_allocations)
+            - product_assignments: dictionary containing the product allocations from user decisions.
         """
-        
         try:
+            # Retrieve the product data from the data container or use instance attributes
+            if self.data_container and self._data_transformed:
+                try:
+                    joined_data = self.data_container.retrieve_stage_data(
+                        stage_name="data_transformation",
+                        process_id=self.process_id or "default_process"
+                    )
+                    product_production_agg_df = joined_data.get('product_production_agg_df')
+                    product_production_line_df = joined_data.get('product_production_line_df')
+                except Exception as e:
+                    logger.error(f"Error retrieving transformed data: {str(e)}")
+                    # Fall back to instance attributes
+                    product_production_agg_df = self.product_production_agg_df
+                    product_production_line_df = self.product_production_line_df
+            else:
+                # Use instance attributes
+                product_production_agg_df = self.product_production_agg_df
+                product_production_line_df = self.product_production_line_df
+            
             unexisting_products = []
             unexisting_prodlines = []
             unexisting_operating_types = []
@@ -517,10 +692,10 @@ class AllocationData(BaseDataModel):
             invalid_quantities = []
             
             # Convert unique values to appropriate types if needed
-            unique_products = self.product_production_agg_df['product_id'].unique()
-            unique_prodlines = self.product_production_agg_df['production_line_id'].unique()
-            unique_operating_types = self.product_production_agg_df['operating_type_id'].unique()
-            unique_product_prodline_comb = self.product_production_line_df[['product_id', 'production_line_id']].drop_duplicates()
+            unique_products = product_production_agg_df['product_id'].unique()
+            unique_prodlines = product_production_agg_df['production_line_id'].unique()
+            unique_operating_types = product_production_agg_df['operating_type_id'].unique()
+            unique_product_prodline_comb = product_production_line_df[['product_id', 'production_line_id']].drop_duplicates()
             
             # Check products
             for item_name, item_data in product_assignments.items():
@@ -529,6 +704,7 @@ class AllocationData(BaseDataModel):
                 target = item_data['target']
                 operating_type_id = item_data['operating_type_id']
                 quantity = item_data['quantity']
+                
                 # Make sure we're comparing compatible types
                 if item_name not in unique_products:
                     unexisting_products.append(item_name)
@@ -543,10 +719,10 @@ class AllocationData(BaseDataModel):
                     unexisting_prodlines.append(target)
                     
                 if operating_type_id not in unique_operating_types:
-                    unexisting_operating_types.append(item_data[1])
+                    unexisting_operating_types.append(operating_type_id)
                     
                 if quantity <= 0:
-                    invalid_quantities.append(item_data[2])
+                    invalid_quantities.append(quantity)
 
                 # Handle type consistency for comparison
                 matches_combination = unique_product_prodline_comb[
@@ -573,28 +749,148 @@ class AllocationData(BaseDataModel):
             logger.error(traceback.format_exc())
             return False
         
-    def calculate_capacity_contributions(self):
+    def get_data_for_algorithm(self, algorithm_name: str):
         """
-        Method for calculating each employee capacity contribution based on the other dataframe information
-        """
-
-        try:
-            # Logic for determining the capacity contribution
-
-            return True
-        except Exception as e:
-            logger.error(f"")
-            return False
+        Prepare data for a specific algorithm
         
-    def calculate_capacity_contributions(self):
+        Args:
+            algorithm_name: Name of the algorithm to prepare data for
+            
+        Returns:
+            Dictionary with data prepared for the algorithm
         """
-        Method for calculating each employee capacity contribution based on the other dataframe information
-        """
-
         try:
-            # Logic for determining the capacity contribution
-
-            return True
+            # Retrieve the latest joined data if available
+            if self.data_container and self._data_transformed:
+                try:
+                    joined_data = self.data_container.retrieve_stage_data(
+                        stage_name="data_transformation",
+                        process_id=self.process_id or "default_process"
+                    )
+                except Exception as e:
+                    logger.error(f"Error retrieving joined data: {str(e)}")
+                    joined_data = None
+            else:
+                joined_data = None
+                
+            # Prepare algorithm-specific data
+            if algorithm_name.lower() == 'fillbags':
+                # FillBags algorithm data
+                if joined_data:
+                    employee_df = joined_data.get('employee_df')
+                    product_production_line_df = joined_data.get('product_production_line_df')
+                    employee_production_lines_df = joined_data.get('employee_production_lines_df')
+                else:
+                    employee_df = self.employee_df
+                    product_production_line_df = self.product_production_line_df
+                    employee_production_lines_df = self.employee_production_lines_df
+                
+                return {
+                    'emp_df': employee_df,
+                    'prodl_df': product_production_line_df,
+                    'emp_prodl_df': employee_production_lines_df
+                }
+                
+            elif algorithm_name.lower() == 'lp':
+                # LP algorithm data
+                if joined_data:
+                    employee_df = joined_data.get('employee_df')
+                    production_line_df = self.production_lines_table  # Need the original for this one
+                    employee_production_lines_df = joined_data.get('employee_production_lines_df')
+                    product_production_agg_df = joined_data.get('product_production_agg_df')
+                else:
+                    employee_df = self.employee_df
+                    production_line_df = self.production_lines_table
+                    employee_production_lines_df = self.employee_production_lines_df
+                    product_production_agg_df = self.product_production_agg_df
+                
+                return {
+                    'employee_df': employee_df,
+                    'production_line_df': production_line_df,
+                    'employee_production_lines_df': employee_production_lines_df,
+                    'product_production_agg_df': product_production_agg_df
+                }
+            
+            else:
+                logger.warning(f"Unknown algorithm: {algorithm_name}")
+                return None
+                
         except Exception as e:
-            logger.error(f"")
-            return False
+            logger.error(f"Error preparing data for algorithm {algorithm_name}: {str(e)}")
+            return None
+            
+    def store_algorithm_results(self, algorithm_name: str, results: Any):
+        """
+        Store algorithm results in the data container
+        
+        Args:
+            algorithm_name: Name of the algorithm
+            results: Algorithm results to store
+            
+        Returns:
+            Storage key if successful, None otherwise
+        """
+        if not self.data_container:
+            logger.warning("No data container available for storing algorithm results")
+            return None
+            
+        try:
+            storage_key = self.data_container.store_stage_data(
+                stage_name="resource_allocation",
+                data=results,
+                metadata={
+                    "process_id": self.process_id or "default_process",
+                    "algorithm": algorithm_name,
+                    "timestamp": datetime.now().isoformat(),
+                    "data_type": "algorithm_results"
+                }
+            )
+            logger.info(f"Stored {algorithm_name} results in container with key: {storage_key}")
+            return storage_key
+            
+        except Exception as e:
+            logger.error(f"Error storing algorithm results: {str(e)}")
+            return None
+            
+    def retrieve_algorithm_results(self, algorithm_name: str):
+        """
+        Retrieve algorithm results from the data container
+        
+        Args:
+            algorithm_name: Name of the algorithm
+            
+        Returns:
+            Algorithm results if found, None otherwise
+        """
+        if not self.data_container:
+            logger.warning("No data container available for retrieving algorithm results")
+            return None
+            
+        try:
+            # List available data
+            available_data = self.data_container.list_available_data({
+                "stage_name": "resource_allocation",
+                "process_id": self.process_id or "default_process",
+                "algorithm": algorithm_name
+            })
+            
+            if not available_data:
+                logger.warning(f"No results found for algorithm {algorithm_name}")
+                return None
+                
+            # Sort by timestamp to get the most recent
+            available_data.sort(key=lambda item: item['metadata']['timestamp'], reverse=True)
+            latest_key = available_data[0]['key']
+            
+            # Retrieve the results
+            results = self.data_container.retrieve_data(latest_key)
+            return results
+            
+        except Exception as e:
+            logger.error(f"Error retrieving algorithm results: {str(e)}")
+            return None
+    
+    def set_process_id(self, process_id: str):
+        """Set the current process ID for data storage"""
+        self.process_id = process_id
+        logger.info(f"Set process ID to: {process_id}")

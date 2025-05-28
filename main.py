@@ -358,7 +358,7 @@ def run_allocation_process_interactive(data_manager: BaseDataManager, process_ma
                 click.echo(click.style("\nResource Allocation Options:", fg="cyan"))
                 
                 # Get algorithm choices from config
-                available_algorithms = CONFIG.get('stages', {}).get('resource_allocation', {}).get('algorithms', ['fillbags'])
+                available_algorithms = CONFIG.get('stages', {}).get('resource_allocation', {}).get('decisions', {}).get('algorithms', ['fillbags'])
                 
                 # Prompt user for algorithm choice
                 algorithm_name = click.prompt(
